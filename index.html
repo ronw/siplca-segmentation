@@ -5,8 +5,9 @@
 <head>
 	<meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
 
-	<title>ronw/siplca-segmentation @ GitHub</title>
-	
+	<title>siplca-segmentation</title>
+	<link rel="stylesheet" href="default.css" type="text/css" />
+	<link rel="stylesheet" href="pygments.css" type="text/css" />
 	<style type="text/css">
 		body {
   		margin-top: 1.0em;
@@ -16,17 +17,16 @@
     }
     #container {
       margin: 0 auto;
-      width: 700px;
+      width: 800px;
     }
 		h1 { font-size: 3.8em; color: #000000; margin-bottom: 3px; }
 		h1 .small { font-size: 0.4em; }
 		h1 a { text-decoration: none }
 		h2 { font-size: 1.5em; color: #000000; }
     h3 { text-align: center; color: #000000; }
-    a { color: #000000; }
     .description { font-size: 1.2em; margin-bottom: 30px; margin-top: 30px; font-style: italic;}
     .download { float: right; }
-		pre { background: #000; color: #fff; padding: 15px;}
+#		pre { background: #000; color: #fff; padding: 15px;}
     hr { border: 0; width: 80%; border-bottom: 1px solid #aaa}
     .footer { text-align:center; padding-top:30px; font-style: italic; }
 	</style>
@@ -45,20 +45,28 @@
         <img border="0" width="90" src="http://github.com/images/modules/download/tar.png"></a>
     </div>
 
-    <h1><a href="http://github.com/ronw/siplca-segmentation">siplca-segmentation</a>
-      <span class="small">by <a href="http://github.com/ronw">ronw</a></span></h1>
+    <h1><a href="http://github.com/ronw/siplca-segmentation">siplca-segmentation</a></h1>
 
     <div class="description">
-      Music structure segmentation based on shift-invariant probabilistic latent component analysis of chroma
+      Music structure segmentation based on SIPLCA analysis of chroma features
     </div>
 
-    <h2>Authors</h2>
-<p>Ron Weiss (ronw@nyu.edu)<br/><br/>      </p>
-<h2>Contact</h2>
-<p>Ron Weiss (ronw@nyu.edu)</p>
 
 
-    <h2>Download</h2>
+<p>This package contains the implementation of the algorithm for
+identifying repeated harmonic patterns in music and structure
+segmentation described in <a href="#ref1">[1]</a>.  It is primarily written in Python but
+calls Matlab for feature extraction and performance evaluation.</p>
+<p>It depends on <a href="http://www.scipy.org">numpy and scipy</a>, <a href="http://matplotlib.sourceforge.net/">Matplotlib</a> for plotting, and <a href="http://mlabwrap.sourceforge.net/">the mlabwrap
+package</a>) for running Matlab code.</p>
+<p>Included is <a href="http://www.ee.columbia.edu/~dpwe">Dan Ellis&#8217;</a> beat-synchronous chroma feature extraction
+code, also available from:
+<a class="reference external" href="http://labrosa.ee.columbia.edu/projects/coversongs/">http://labrosa.ee.columbia.edu/projects/coversongs/</a>.  Also useful (but not included) is Dan&#8217;s code for <a href="http://labrosa.ee.columbia.edu/matlab/chroma-ansyn/">resynthesizing chroma.</a></p>
+
+<p>All code in this package is distributed under the terms of the GNU
+General Public License.  See the file <a href="http://github.com/ronw/siplca-segmentation/blob/master/COPYING">COPYING</a> for details.</p>
+
+<h2>Download</h2>
     <p>
       You can download this project in either
       <a href="http://github.com/ronw/siplca-segmentation/zipball/master">zip</a> or
@@ -69,12 +77,60 @@
       <pre>$ git clone git://github.com/ronw/siplca-segmentation</pre>
     </p>
 
+<h2>Example usage</h2>
+<div class="highlight-python"><div class="highlight"><pre><span class="gp">&gt;&gt;&gt; </span><span class="kn">import</span> <span class="nn">segmenter</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">wavfile</span> <span class="o">=</span> <span class="s">&#39;/path/to/come_together.wav&#39;</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">rank</span> <span class="o">=</span> <span class="mf">4</span>  <span class="c"># rank corresponds to the number of segments</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">win</span> <span class="o">=</span> <span class="mf">60</span>  <span class="c"># win controls the length of each chroma pattern</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">niter</span> <span class="o">=</span> <span class="mf">200</span>  <span class="c"># number of iterations to perform</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">seed</span><span class="p">(</span><span class="mf">123</span><span class="p">)</span>  <span class="c"># Make this reproduceable</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">labels</span> <span class="o">=</span> <span class="n">segmenter</span><span class="o">.</span><span class="n">segment_wavfile</span><span class="p">(</span><span class="n">wavfile</span><span class="p">,</span> <span class="n">win</span><span class="o">=</span><span class="n">win</span><span class="p">,</span> <span class="n">rank</span><span class="o">=</span><span class="n">rank</span><span class="p">,</span>
+<span class="gp">... </span>                                   <span class="n">niter</span><span class="o">=</span><span class="n">niter</span><span class="p">,</span> <span class="n">plotiter</span><span class="o">=</span><span class="mf">10</span><span class="p">)</span>
+<span class="go">INFO:plca:Iteration 0: divergence = 10.065992</span>
+<span class="go">INFO:plca:Iteration 50: divergence = 9.468196</span>
+<span class="go">INFO:plca:Iteration 100: divergence = 9.421632</span>
+<span class="go">INFO:plca:Iteration 150: divergence = 9.409279</span>
+<span class="go">INFO:root:Iteration 199: final divergence = 9.404961</span>
+<span class="go">INFO:segmenter:Removing 2 segments shorter than 32 frames</span>
+</pre></div>
+</div>
+<a class="reference external image-reference" href="come_together_segmentation.png"><div align="center" class="align-center"><img alt="come_together_segmentation.png" class="align-center" src="come_together_segmentation.png" style="width: 691.5px; height: 483.75px;" /></div>
+</a>
+
+(You can also watch the <a href="come_together_movie.avi">video</a> of the EM algorithm in action.)
+
+<div class="highlight-python"><div class="highlight"><pre><span class="gp">&gt;&gt;&gt; </span><span class="k">print</span> <span class="n">labels</span>
+<span class="go">0.0000 21.7480 segment0</span>
+<span class="go">21.7480 37.7640 segment1</span>
+<span class="go">37.7640 55.1000 segment0</span>
+<span class="go">55.1000 76.1440 segment1</span>
+<span class="go">76.1440 95.1640 segment0</span>
+<span class="go">95.1640 121.2360 segment1</span>
+<span class="go">121.2360 158.5360 segment2</span>
+<span class="go">158.5360 180.8520 segment1</span>
+<span class="go">180.8520 196.5840 segment0</span>
+<span class="go">196.5840 255.8160 segment3</span>
+</pre></div>
+</div>
+<p>See the <a href="http://github.com/ronw/siplca-segmentation/blob/master/segmenter.py">segmenter</a> and <a href="http://github.com/ronw/siplca-segmentation/blob/master/plca.py">plca</a> modules for more details.</p>
+
+<h2>Acknowledgments</h2>
+<p>This material is based upon work supported by the NSF (grant
+IIS-0844654) and by the IMLS (grant LG-06-08-0073-08).</p>
+
+<h2>References</h2>
+<a name="ref1">[1]</a> R. J. Weiss and J. P. Bello. &#8220;Identifying Repeated Patterns in
+Music Using Sparse Convolutive Non-Negative Matrix
+Factorization&#8221;. In Proc. International Conference on Music
+Information Retrieval (ISMIR), 2010.
+
+<p>2010-05-27 Ron Weiss &lt;<a class="reference external" href="mailto:ronw&#37;&#52;&#48;nyu&#46;edu">ronw<span>&#64;</span>nyu<span>&#46;</span>edu</a>&gt;</p>
+
+</div>
+
     <div class="footer">
       get the source code on GitHub : <a href="http://github.com/ronw/siplca-segmentation">ronw/siplca-segmentation</a>
     </div>
 
-  </div>
-
-  
 </body>
 </html>
