@@ -631,3 +631,58 @@ class SIPLCA2(SIPLCA):
         H /= H.sum(2).sum(1)[:,np.newaxis,np.newaxis]
 
         return self._prune_undeeded_bases(W, Z, H, curriter)
+
+
+class FactoredSIPLCA2(SIPLCA2):
+    """Sparse 2D Shift-Invariant PLCA with factored `W`
+
+    This class performs the same decomposition as SIPLCA2, except W is
+    factored into two independent terms:
+      W = P(f, \tau | k)
+        = P(f | \tau, k) P(\tau | k)
+
+    This enables priors to be enforced *independently* over the rows
+    and columns of W_k.  The `alphaW` argument now controls sparsity
+    in each column of W_k and `alphaT` controls sparsity in the rows.
+
+    See Also
+    --------
+    SIPLCA2 : 2D Shift-Invariant PLCA
+    """
+    def __init__(self, V, rank, alphaT=0, **kwargs):
+        SIPLCA2.__init__(self, V, rank, **kwargs)
+        self.alphaT = 1 + alphaT
+
+    def do_mstep(self, curriter):
+        VR = self.R * self.V[:,:,np.newaxis,np.newaxis,np.newaxis]
+        Z = normalize(_fix_negative_values(
+            VR.sum(4).sum(3).sum(1).sum(0) + self.alphaZ - 1))
+
+        # Factored W = P(f, \tau | k) = P(f | \tau, k) P(\tau | k)
+        # P(f | \tau, k)
+        Pf = np.zeros((self.F, self.rank, self.winT))
+        # P(\tau, k)
+        PTk = np.zeros((self.rank, self.winT))
+        for tauF in xrange(self.winF):
+            tmp = shift(VR[:,:,:,tauF,:], -tauF, 0, self.circularF).sum(1)
+            Pf += tmp
+            PTk += tmp.sum(0)
+
+        Pf = _fix_negative_values(Pf + self.alphaW - 1)
+        Pf /= Pf.sum(0)[np.newaxis,:,:]
+
+        PTk = _fix_negative_values(PTk + self.alphaT - 1)
+        PTk /= PTk.sum()
+        PTgivenk = PTk / Z[:,np.newaxis]
+
+        # W = P(f, \tau | k)
+        W = Pf * PTgivenk[np.newaxis,:,:]
+
+        H = np.zeros((self.rank, self.winF, self.T))
+        for tauT in xrange(self.winT):
+            H += shift(VR[:,:,:,:,tauT], -tauT, 1,
+                       self.circularT).sum(0).transpose((1,2,0))
+        H = _fix_negative_values(H + self.alphaH - 1)
+        H /= H.sum(2).sum(1)[:,np.newaxis,np.newaxis]
+
+        return self._prune_undeeded_bases(W, Z, H, curriter)
