@@ -100,7 +100,7 @@ def shift(a, shift, axis=None, circular=True):
     return aroll
 
 def _fix_negative_values(x, fix=EPS):
-    x[x < 0] = fix
+    x[x <= 0] = fix
     return x
 
 
@@ -486,7 +486,7 @@ class SIPLCA(PLCA):
 
         H = np.zeros((self.rank, self.T))
         for tau in xrange(self.win):
-            H += np.sum(shift(VR[:,:,:,tau], -tau, 1, self.circular), 0).T
+            H += shift(VR[:,:,:,tau].sum(0), -tau, 0, self.circular).T
         H = normalize(_fix_negative_values(H + self.alphaH - 1), 1)
 
         return self._prune_undeeded_bases(W, Z, H, curriter)
@@ -586,6 +586,7 @@ class SIPLCA2(SIPLCA):
         W, Z, H = super(SIPLCA2, self).initialize()
         W = np.random.rand(self.F, self.rank, self.winT)
         W /= W.sum(2).sum(0)[np.newaxis,:,np.newaxis]
+
         H = np.random.rand(self.rank, self.winF, self.T)
         H /= H.sum(2).sum(1)[:,np.newaxis,np.newaxis]
         return W, Z, H
@@ -619,14 +620,14 @@ class SIPLCA2(SIPLCA):
 
         W = np.zeros((self.F, self.rank, self.winT))
         for tauF in xrange(self.winF):
-            W += shift(VR[:,:,:,tauF,:], -tauF, 0, self.circularF).sum(1)
+            W += shift(VR[:,:,:,tauF,:].sum(1), -tauF, 0, self.circularF)
         W = _fix_negative_values(W + self.alphaW - 1)
         W /= W.sum(2).sum(0)[np.newaxis,:,np.newaxis]
 
         H = np.zeros((self.rank, self.winF, self.T))
         for tauT in xrange(self.winT):
-            H += shift(VR[:,:,:,:,tauT], -tauT, 1,
-                       self.circularT).sum(0).transpose((1,2,0))
+            H += shift(VR[:,:,:,:,tauT].sum(0), -tauT, 0,
+                       self.circularT).transpose((1,2,0))
         H = _fix_negative_values(H + self.alphaH - 1)
         H /= H.sum(2).sum(1)[:,np.newaxis,np.newaxis]
 
