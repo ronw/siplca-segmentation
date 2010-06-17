@@ -34,7 +34,12 @@ if nargin < 5; type = 1; end
 
 
 tempomean = 240;
-temposd = 1.5;
+%temposd = 1.5;
+% Following the temposd setting from
+% http://labrosa.ee.columbia.edu/projects/coversongs/covers80/
+% to make the output of this function consistent with the features used
+% in my ISMIR paper. -ronw 2010-06-17
+temposd = 1.0;
 
 % Try beat tracking now for quick answer
 bts = beat(d,sr,[tempomean temposd],[6 0.8],0);
