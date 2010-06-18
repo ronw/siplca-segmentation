@@ -500,7 +500,10 @@ class SIPLCA(PLCA):
         
         plots = [None] * (2*nrows + 2)
         titles=plots + ['H%d' % x for x in range(rank)]
-        plots.extend(H)
+        if H.ndim < 4:
+            plots.extend(H)
+        else:
+            plots.extend(H.sum(2))
         plottools.plotall(plots, subplot=(nrows, 3), order='c', align='xy',
                           grid=False, clf=False, title=titles, yticks=[[]],
                           colorbar=False, cmap=plt.cm.hot, ylabel=r'$*$',
@@ -773,5 +776,124 @@ class FactoredSIPLCA2(SIPLCA2):
         initialH = normalize(Hevidence, axis=[1, 2])
         H = self._apply_entropic_prior_and_normalize(
             initialH, Hevidence, self.betaH, nu=self.nu, axis=[1, 2])
+
+        return self._prune_undeeded_bases(W, Z, H, curriter)
+
+
+class DiscreteWSIPLCA2(SIPLCA2):
+    """Sparse (Time) Warp and 2D Shift-Invariant PLCA
+
+    See Also
+    --------
+    PLCA : Probabilistic Latent Component Analysis
+    SIPLCA2 : 2D SIPLCA
+    """ 
+    def __init__(self, V, rank, warpfactors=[1], **kwargs):
+        SIPLCA2.__init__(self, V, rank, **kwargs)
+
+        self.warpfactors = np.array(warpfactors, dtype=np.float)
+        self.nwarp = len(self.warpfactors)
+        maxdelay = self.win / self.warpfactors.min() + 1
+        self.R = np.zeros((self.F, self.T, self.rank, self.winF, maxdelay,
+                           self.nwarp))
+
+        # Need to weigh each path by the number of repetitions of each
+        # tau.  Keep track of it here.
+        self.taus = []
+        self.tauproportions = []
+        for n, warp in enumerate(self.warpfactors):
+            currtaus = np.floor(warp * np.arange(self.win/warp))
+
+            currtauproportions = np.empty(len(currtaus))
+            for m,tau in enumerate(currtaus):
+                #currtauproportions[m] = (1.0 / np.ceil(warp)) / np.sum(currtaus == tau)
+                currtauproportions[m] = 1.0 / np.sum(currtaus == tau)
+
+            self.taus.append([int(x) for x in currtaus])
+            self.tauproportions.append(currtauproportions)
+
+        #print self.taus
+        #print self.tauproportions
+        #print [x.sum() for x in self.tauproportions]
+
+    def reconstruct(self, W, Z, H, norm=1.0, circular=False):
+        if W.ndim == 2:
+            W = W[:,np.newaxis,:]
+        if H.ndim == 3:
+            H = H[np.newaxis,:,:,:]
+        F, rank, winT = W.shape
+        rank, winF, nwarp, T = H.shape
+
+        try:
+            circularF, circularT = circular
+        except:
+            circularF = circularT = circular
+
+        recon = np.zeros((F, T))
+        for r in xrange(self.winF):
+            Wshifted = shift(W, r, 0, circularF)
+            for n, warp in enumerate(self.warpfactors):
+                for delay, tau in enumerate(self.taus[n]):
+                    recon += np.dot(Wshifted[:,:,tau] * Z,
+                                    shift(H[:,r,n,:], delay, 1, circularT)
+                                    * self.tauproportions[n][delay])
+        return recon
+
+    def initialize(self):
+        W, Z, H = super(DiscreteWSIPLCA2, self).initialize()
+        H = np.random.rand(self.rank, self.winF, self.nwarp, self.T)
+        H /= H.sum(3).sum(2).sum(1)[:,np.newaxis,np.newaxis,np.newaxis] + EPS
+        return W, Z, H
+
+    def do_estep(self, W, Z, H):
+        WZH = self.reconstruct(W, Z, H,
+                               circular=[self.circularF, self.circularT])
+        kldiv = kldivergence(self.V, WZH)
+
+        WZ = W * Z[np.newaxis,:,np.newaxis]
+        for r in xrange(self.winF):
+            WZshifted = shift(WZ, r, 0, self.circularF)
+            for n, warp in enumerate(self.warpfactors):
+                for delay, tau in enumerate(self.taus[n]):
+                    Hshifted = (shift(H[:,r,n,:], tau, 1, self.circularT)
+                                * self.tauproportions[n][delay])# / warp) # FIXME
+                    self.R[:,:,:,r,delay,n] = (
+                        WZshifted[:,:,tau][:,:,np.newaxis]
+                        * Hshifted[np.newaxis,:,:]).transpose((0,2,1))
+        self.R /= WZH[:,:,np.newaxis,np.newaxis,np.newaxis,np.newaxis] + EPS
+
+        return kldiv, WZH
+
+    def do_mstep(self, curriter):
+        VR = self.R * self.V[:,:,np.newaxis,np.newaxis,np.newaxis,np.newaxis]
+
+        Zevidence = self._fix_negative_values(
+            VR.sum(5).sum(4).sum(3).sum(1).sum(0) + self.alphaZ - 1)
+        initialZ = normalize(Zevidence)
+        Z = self._apply_entropic_prior_and_normalize(
+            initialZ, Zevidence, self.betaZ, nu=self.nu)
+
+        Wevidence = np.zeros((self.F, self.rank, self.winT))
+        VRsumt = VR.sum(1)
+        for r in xrange(self.winF):
+            for n, warp in enumerate(self.warpfactors):
+                for delay, tau in enumerate(self.taus[n]):
+                    Wevidence[:,:,tau] += shift(VRsumt[:,:,r,delay,n], -r, 0,
+                                                self.circularF)
+        Wevidence = self._fix_negative_values(Wevidence + self.alphaW - 1)
+        initialW = normalize(Wevidence, axis=[0, 2])
+        W = self._apply_entropic_prior_and_normalize(
+            initialW, Wevidence, self.betaW, nu=self.nu, axis=[0, 2])
+
+        Hevidence = np.zeros((self.rank, self.winF, self.nwarp, self.T))
+        VRsumf = VR.sum(0)
+        for n, warp in enumerate(self.warpfactors):
+            for delay, tau in enumerate(self.taus[n]):
+                Hevidence[:,:,n,:] += shift(VRsumf[:,:,:,delay,n], -delay, 0,
+                                            self.circularT).transpose((1,2,0))
+        Hevidence = self._fix_negative_values(Hevidence + self.alphaH - 1)
+        initialH = normalize(Hevidence, axis=[1, 2, 3])
+        H = self._apply_entropic_prior_and_normalize(
+            initialH, Hevidence, self.betaH, nu=self.nu, axis=[1, 2, 3])
 
         return self._prune_undeeded_bases(W, Z, H, curriter)
