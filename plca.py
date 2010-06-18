@@ -16,7 +16,8 @@
 """plca: Probabilistic Latent Component Analysis
 
 This module implements a number of variations of the PLCA algorithms
-described in [2] and [3] with Dirichlet priors over the parmaters.
+described in [2] and [3] with both Dirichlet and (approximate)
+Entropic priors over the parmaters.
 
 PLCA is a variant of non-negative matrix factorization which
 decomposes a (2D) probabilitity distribution (arbitrarily normalized
@@ -64,9 +65,15 @@ def kldivergence(V, WZH):
 
 def normalize(A, axis=None):
     Ashape = A.shape
-    norm = A.sum(axis) + EPS
+    try:
+        norm = A.sum(axis) + EPS
+    except TypeError:
+        norm = A.copy()
+        for ax in reversed(sorted(axis)):
+            norm = norm.sum(ax)
+        norm += EPS
     if axis:
-        nshape = list(Ashape)
+        nshape = np.array(Ashape)
         nshape[axis] = 1
         norm.shape = nshape
     return A / norm
@@ -99,10 +106,6 @@ def shift(a, shift, axis=None, circular=True):
             aroll[index] = 0
     return aroll
 
-def _fix_negative_values(x, fix=EPS):
-    x[x <= 0] = fix
-    return x
-
 
 class PLCA(object):
     """Probabilistic Latent Component Analysis
@@ -117,7 +120,7 @@ class PLCA(object):
         Makes a pretty plot of V and the decomposition.
 
     initialize()
-        Randomly initializes the parameters
+        Randomly initializes the parameters.
     do_estep(W, Z, H)
         Performs the E-step of the EM parameter estimation algorithm.
     do_mstep()
@@ -126,7 +129,7 @@ class PLCA(object):
     Notes
     -----
     You probably don't want to initialize this class directly.  Most
-    interactions should be through the statis methods analyze,
+    interactions should be through the static methods analyze,
     reconstruct, and plot.
 
     Subclasses that want to use a similar interface (e.g. SIPLCA)
@@ -166,8 +169,8 @@ class PLCA(object):
     SIPLCA : Shift-Invariant PLCA
     SIPLCA2 : 2D Shift-Invariant PLCA
     """
-    def __init__(self, V, rank, alphaW=0, alphaZ=0, alphaH=0, minpruneiter=0,
-                 **kwargs):
+    def __init__(self, V, rank, alphaW=0, alphaZ=0, alphaH=0,
+                 betaW=0, betaZ=0, betaH=0, nu=50.0, minpruneiter=0, **kwargs):
         """
         Parameters
         ----------
@@ -177,13 +180,20 @@ class PLCA(object):
             Rank of the decomposition (i.e. number of columns of `W`
             and rows of `H`).
         alphaW, alphaZ, alphaH : float or appropriately shaped array
-            Sparsity prior parameters for `W`, `Z`, and `H`.  Negative
-            values lead to sparser distributions, positive values
-            makes the distributions more uniform.  Defaults to 0 (no
-            prior).
+            Dirichlet prior parameters for `W`, `Z`, and `H`.
+            Negative values lead to sparser distributions, positive
+            values makes the distributions more uniform.  Defaults to
+            0 (no prior).
 
             **Note** that the prior is not parametrized in the
             standard way where the uninformative prior has alpha=1.
+        betaW, betaZ, betaH : non-negative float
+            Entropic prior parameters for `W`, `Z`, and `H`.  Large
+            values lead to sparser distributions.  Defaults to 0 (no
+            prior).
+        nu : float
+            Approximation parameter for the Entropic prior.  It's
+            probably safe to leave the default.
         """
         self.V = V.copy()
         self.rank = rank
@@ -195,7 +205,14 @@ class PLCA(object):
         self.alphaW = 1 + alphaW
         self.alphaZ = 1 + alphaZ
         self.alphaH = 1 + alphaH
-        #print self.alphaW, self.alphaZ, self.alphaH
+
+        if betaW < 0 or betaZ < 0 or betaH < 0:
+            raise (ValueError, 'Entropic prior parameters beta{W,Z,H} must be '
+                   'non-negative')
+        self.betaW = betaW
+        self.betaZ = betaZ
+        self.betaH = betaH
+        self.nu = nu
 
         self.minpruneiter = minpruneiter
 
@@ -329,6 +346,7 @@ class PLCA(object):
 
         for z in xrange(self.rank):
             self.R[:,:,z] = np.outer(W[:,z] * Z[z], H[z,:])
+        # Note that self.R.sum(2) == WZH
         self.R /= self.R.sum(2)[:,:,np.newaxis]
         
         return kldiv, WZH
@@ -340,14 +358,34 @@ class PLCA(object):
         distribution computer in the E-step.
         """
         VR = self.R * self.V[:,:,np.newaxis]
-        Z = normalize(_fix_negative_values(VR.sum(1).sum(0) + self.alphaZ - 1))
-        W = normalize(_fix_negative_values(VR.sum(1) + self.alphaW - 1), 0)
-        H = normalize(_fix_negative_values(VR.sum(0).T + self.alphaH - 1), 1)
+
+        Zevidence = self._fix_negative_values(VR.sum(1).sum(0)
+                                              + self.alphaZ - 1)
+        initialZ = normalize(Zevidence)
+        Z = self._apply_entropic_prior_and_normalize(
+            initialZ, Zevidence, self.betaZ, nu=self.nu)
+
+        Wevidence = self._fix_negative_values(VR.sum(1) + self.alphaW - 1)
+        initialW = normalize(Wevidence, axis=0)
+        W = self._apply_entropic_prior_and_normalize(
+            initialW, Wevidence, self.betaW, nu=self.nu, axis=0)
+
+        Hevidence = self._fix_negative_values(VR.sum(0).T + self.alphaH - 1)
+        initialH = normalize(Hevidence, axis=1)
+        H = self._apply_entropic_prior_and_normalize(
+            initialH, Hevidence, self.betaH, nu=self.nu, axis=1)
+        
         return self._prune_undeeded_bases(W, Z, H, curriter)
+
+    @staticmethod
+    def _fix_negative_values(x, fix=EPS):
+        x[x <= 0] = fix
+        return x
 
     def _prune_undeeded_bases(self, W, Z, H, curriter):
         """Discards bases which do not contribute to the decomposition"""
-        threshold = 10 * EPS
+        #threshold = 10 * EPS
+        threshold = -1
         zidx = np.argwhere(Z > threshold).flatten()
         if len(zidx) < self.rank and curriter >= self.minpruneiter:
             logger.info('Rank decreased from %d to %d during iteration %d',
@@ -358,6 +396,22 @@ class PLCA(object):
             H = H[zidx,:]
             self.R = self.R[:,:,zidx]
         return W, Z, H
+
+    @staticmethod
+    def _apply_entropic_prior_and_normalize(param, evidence, beta, nu=50,
+                                            niter=30, convergence_thresh=1e-7,
+                                            axis=None):
+        """Uses the approximation to the entropic prior from Matt Hoffman."""
+        for i in xrange(niter):
+            lastparam = param.copy()
+            alpha = normalize(param**(nu / (nu - 1.0)), axis)
+            param = normalize(evidence + beta * nu * alpha, axis)
+            #param = normalize(evidence + beta * nu * param**(nu / (nu - 1.0)), 1)
+            if np.mean(np.abs(param - lastparam)) < convergence_thresh:
+                logger.debug('M-step finished after iteration %d (beta=%f)',
+                             i, beta)
+                break
+        return param
 
 
 class SIPLCA(PLCA):
@@ -417,12 +471,12 @@ class SIPLCA(PLCA):
             WZH += np.dot(W[:,:,tau] * Z, shift(H, tau, 1, circular))
         return norm * WZH
 
-    @classmethod
-    def plot(cls, V, W, Z, H, curriter=-1):
+    def plot(self, V, W, Z, H, curriter=-1):
         rank = len(Z)
         nrows = rank + 2
-        WZH = cls.reconstruct(W, Z, H)
-        plottools.plotall([V, WZH] + [cls.reconstruct(W[:,z,:], Z[z], H[z,:])
+        WZH = self.reconstruct(W, Z, H, circular=self.circular)
+        plottools.plotall([V, WZH] + [self.reconstruct(W[:,z,:], Z[z], H[z,:],
+                                                       circular=self.circular)
                                       for z in xrange(len(Z))], 
                           title=['V (Iteration %d)' % curriter,
                                  'Reconstruction'] +
@@ -478,16 +532,24 @@ class SIPLCA(PLCA):
     def do_mstep(self, curriter):
         VR = self.R * (self.V[:,:,np.newaxis,np.newaxis] + EPS)
 
-        Z = normalize(_fix_negative_values(VR.sum(3).sum(1).sum(0)
-                                           + self.alphaZ - 1))
+        Zevidence = self._fix_negative_values(VR.sum(3).sum(1).sum(0)
+                                              + self.alphaZ - 1)
+        initialZ = normalize(Zevidence)
+        Z = self._apply_entropic_prior_and_normalize(
+            initialZ, Zevidence, self.betaZ, nu=self.nu)
 
-        W = _fix_negative_values(VR.sum(1) + self.alphaW - 1)
-        W /= W.sum(2).sum(0)[np.newaxis,:,np.newaxis] + EPS
+        Wevidence = self._fix_negative_values(VR.sum(1) + self.alphaW - 1)
+        initialW = normalize(Wevidence, axis=[0, 2])
+        W = self._apply_entropic_prior_and_normalize(
+            initialW, Wevidence, self.betaW, nu=self.nu, axis=[0, 2])
 
-        H = np.zeros((self.rank, self.T))
+        Hevidence = np.zeros((self.rank, self.T))
         for tau in xrange(self.win):
-            H += shift(VR[:,:,:,tau].sum(0), -tau, 0, self.circular).T
-        H = normalize(_fix_negative_values(H + self.alphaH - 1), 1)
+            Hevidence += shift(VR[:,:,:,tau].sum(0), -tau, 0, self.circular).T
+        Hevidence = self._fix_negative_values(Hevidence + self.alphaH - 1)
+        initialH = normalize(Hevidence, axis=1)
+        H = self._apply_entropic_prior_and_normalize(
+            initialH, Hevidence, self.betaH, nu=self.nu, axis=1)
 
         return self._prune_undeeded_bases(W, Z, H, curriter)
 
@@ -549,6 +611,8 @@ class SIPLCA2(SIPLCA):
             self.circularF, self.circularT = circular
         except:
             self.circularF = self.circularT = circular
+        # Needed for plot.
+        self.circular = (self.circularF, self.circularT)
 
         self.R = np.zeros((self.F, self.T, self.rank, self.winF, self.winT))
 
@@ -592,8 +656,8 @@ class SIPLCA2(SIPLCA):
         return W, Z, H
 
     def do_estep(self, W, Z, H):
-        WZH = SIPLCA2.reconstruct(W, Z, H,
-                                  circular=[self.circularF, self.circularT])
+        WZH = self.reconstruct(W, Z, H,
+                               circular=[self.circularF, self.circularT])
         kldiv = kldivergence(self.V, WZH)
         #loglik = (np.sum(self.V * np.log(WZH))
         #          + (self.alphaW-1)*np.sum(np.log(W))
@@ -615,21 +679,31 @@ class SIPLCA2(SIPLCA):
 
     def do_mstep(self, curriter):
         VR = self.R * self.V[:,:,np.newaxis,np.newaxis,np.newaxis]
-        Z = normalize(_fix_negative_values(
-            VR.sum(4).sum(3).sum(1).sum(0) + self.alphaZ - 1))
 
-        W = np.zeros((self.F, self.rank, self.winT))
-        for tauF in xrange(self.winF):
-            W += shift(VR[:,:,:,tauF,:].sum(1), -tauF, 0, self.circularF)
-        W = _fix_negative_values(W + self.alphaW - 1)
-        W /= W.sum(2).sum(0)[np.newaxis,:,np.newaxis]
+        Zevidence = self._fix_negative_values(
+            VR.sum(4).sum(3).sum(1).sum(0) + self.alphaZ - 1)
+        initialZ = normalize(Zevidence)
+        Z = self._apply_entropic_prior_and_normalize(
+            initialZ, Zevidence, self.betaZ, nu=self.nu)
 
-        H = np.zeros((self.rank, self.winF, self.T))
-        for tauT in xrange(self.winT):
-            H += shift(VR[:,:,:,:,tauT].sum(0), -tauT, 0,
-                       self.circularT).transpose((1,2,0))
-        H = _fix_negative_values(H + self.alphaH - 1)
-        H /= H.sum(2).sum(1)[:,np.newaxis,np.newaxis]
+        Wevidence = np.zeros((self.F, self.rank, self.winT))
+        VRsumt = VR.sum(1)
+        for r in xrange(self.winF):
+            Wevidence += shift(VRsumt[:,:,r,:], -r, 0, self.circularF)
+        Wevidence = self._fix_negative_values(Wevidence + self.alphaW - 1)
+        initialW = normalize(Wevidence, axis=[0, 2])
+        W = self._apply_entropic_prior_and_normalize(
+            initialW, Wevidence, self.betaW, nu=self.nu, axis=[0, 2])
+
+        Hevidence = np.zeros((self.rank, self.winF, self.T))
+        VRsumf = VR.sum(0)
+        for tau in xrange(self.winT):
+            Hevidence += shift(VRsumf[:,:,:,tau], -tau, 0,
+                               self.circularT).transpose((1,2,0))
+        Hevidence = self._fix_negative_values(Hevidence + self.alphaH - 1)
+        initialH = normalize(Hevidence, axis=[1, 2])
+        H = self._apply_entropic_prior_and_normalize(
+            initialH, Hevidence, self.betaH, nu=self.nu, axis=[1, 2])
 
         return self._prune_undeeded_bases(W, Z, H, curriter)
 
@@ -639,51 +713,65 @@ class FactoredSIPLCA2(SIPLCA2):
 
     This class performs the same decomposition as SIPLCA2, except W is
     factored into two independent terms:
-      W = P(f, \tau | k)
-        = P(f | \tau, k) P(\tau | k)
+      W = P(f, \tau | k) = P(f | \tau, k) P(\tau | k)
 
     This enables priors to be enforced *independently* over the rows
-    and columns of W_k.  The `alphaW` argument now controls sparsity
-    in each column of W_k and `alphaT` controls sparsity in the rows.
+    and columns of W_k.  The `alphaW` and `betaW` arguments now
+    control sparsity in each column of W_k and `alphaT` and `betaT`
+    control sparsity in the rows.
 
     See Also
     --------
     SIPLCA2 : 2D Shift-Invariant PLCA
     """
-    def __init__(self, V, rank, alphaT=0, **kwargs):
+    def __init__(self, V, rank, alphaT=0, betaT=0, **kwargs):
         SIPLCA2.__init__(self, V, rank, **kwargs)
         self.alphaT = 1 + alphaT
+        self.betaT = betaT
 
     def do_mstep(self, curriter):
         VR = self.R * self.V[:,:,np.newaxis,np.newaxis,np.newaxis]
-        Z = normalize(_fix_negative_values(
-            VR.sum(4).sum(3).sum(1).sum(0) + self.alphaZ - 1))
+
+        Zevidence = self._fix_negative_values(
+            VR.sum(4).sum(3).sum(1).sum(0) + self.alphaZ - 1)
+        initialZ = normalize(Zevidence)
+        Z = self._apply_entropic_prior_and_normalize(
+            initialZ, Zevidence, self.betaZ, nu=self.nu)
 
         # Factored W = P(f, \tau | k) = P(f | \tau, k) P(\tau | k)
         # P(f | \tau, k)
-        Pf = np.zeros((self.F, self.rank, self.winT))
+        Pf_evidence = np.zeros((self.F, self.rank, self.winT))
         # P(\tau, k)
-        PTk = np.zeros((self.rank, self.winT))
-        for tauF in xrange(self.winF):
-            tmp = shift(VR[:,:,:,tauF,:], -tauF, 0, self.circularF).sum(1)
-            Pf += tmp
-            PTk += tmp.sum(0)
+        Ptauk_evidence= np.zeros((self.rank, self.winT))
+        VRsumt = VR.sum(1)
+        for r in xrange(self.winF):
+            tmp = shift(VRsumt[:,:,r,:], -r, 0, self.circularF)
+            Pf_evidence += tmp
+            Ptauk_evidence += tmp.sum(0)
 
-        Pf = _fix_negative_values(Pf + self.alphaW - 1)
-        Pf /= Pf.sum(0)[np.newaxis,:,:]
+        Pf_evidence = self._fix_negative_values(Pf_evidence + self.alphaW - 1)
+        initialPf = normalize(Pf_evidence, 0)
+        Pf = self._apply_entropic_prior_and_normalize(
+            initialPf, Pf_evidence, self.betaW, nu=self.nu, axis=0)
 
-        PTk = _fix_negative_values(PTk + self.alphaT - 1)
-        PTk /= PTk.sum()
-        PTgivenk = PTk / Z[:,np.newaxis]
+        Ptauk_evidence = self._fix_negative_values(Ptauk_evidence + self.alphaT - 1)
+        initialPtauk = normalize(Ptauk_evidence)
+        Ptauk = self._apply_entropic_prior_and_normalize(
+            initialPtauk, Ptauk_evidence, self.betaT, nu=self.nu)
+
+        PTgivenk = Ptauk / Z[:,np.newaxis]
 
         # W = P(f, \tau | k)
         W = Pf * PTgivenk[np.newaxis,:,:]
 
-        H = np.zeros((self.rank, self.winF, self.T))
-        for tauT in xrange(self.winT):
-            H += shift(VR[:,:,:,:,tauT], -tauT, 1,
-                       self.circularT).sum(0).transpose((1,2,0))
-        H = _fix_negative_values(H + self.alphaH - 1)
-        H /= H.sum(2).sum(1)[:,np.newaxis,np.newaxis]
+        Hevidence = np.zeros((self.rank, self.winF, self.T))
+        VRsumf = VR.sum(0)
+        for tau in xrange(self.winT):
+            Hevidence += shift(VRsumf[:,:,:,tau], -tau, 0,
+                               self.circularT).transpose((1,2,0))
+        Hevidence = self._fix_negative_values(Hevidence + self.alphaH - 1)
+        initialH = normalize(Hevidence, axis=[1, 2])
+        H = self._apply_entropic_prior_and_normalize(
+            initialH, Hevidence, self.betaH, nu=self.nu, axis=[1, 2])
 
         return self._prune_undeeded_bases(W, Z, H, curriter)
