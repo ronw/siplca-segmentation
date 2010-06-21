@@ -624,7 +624,9 @@ class SIPLCA2(SIPLCA):
         # Needed for plot.
         self.circular = (self.circularF, self.circularT)
 
-        self.R = np.empty((self.F, self.T, self.rank, self.winF, self.winT))
+        del self.R
+        self.VRW = np.empty((self.F, self.rank, self.winT))
+        self.VRH = np.empty((self.T, self.rank, self.winF))
 
     @staticmethod
     def reconstruct(W, Z, H, norm=1.0, circular=False):
@@ -671,42 +673,35 @@ class SIPLCA2(SIPLCA):
         logprob = self.compute_logprob(W, Z, H, WZH)
 
         WZ = W * Z[np.newaxis,:,np.newaxis]
-        for tauF in xrange(self.winF):
-            Wshift = shift(WZ, tauF, 0, self.circularF)
-            for tauT in xrange(self.winT):
-                Hshift = shift(H[:,tauF,:], tauT, 1, self.circularT)
-                self.R[:,:,:,tauF,tauT] = (
-                    Wshift[:,:,tauT][:,:,np.newaxis]
-                    * Hshift[np.newaxis,:,:]).transpose((0,2,1))
-        self.R /= (EPS +
-            self.R.sum(4).sum(3).sum(2)[:,:,np.newaxis,np.newaxis,np.newaxis])
-
+        VdivWZH = (self.V / (WZH + EPS))[:,:,np.newaxis]
+        self.VRW[:,:,:] = 0
+        self.VRH[:,:,:] = 0
+        for r in xrange(self.winF):
+            WZshifted = shift(WZ, r, 0, self.circularF)
+            for tau in xrange(self.winT):
+                Hshifted = shift(H[:,r,:], tau, 1, self.circularT)
+                tmp = ((WZshifted[:,:,tau][:,:,np.newaxis]
+                        * Hshifted[np.newaxis,:,:]).transpose((0,2,1))
+                       * VdivWZH)
+                self.VRW[:,:,tau] += shift(tmp.sum(1), -r, 0, self.circularF)
+                self.VRH[:,:,r] += shift(tmp.sum(0), -tau, 0, self.circularT)
+                    
         return logprob, WZH
 
     def do_mstep(self, curriter):
-        VR = self.R * self.V[:,:,np.newaxis,np.newaxis,np.newaxis]
-
-        Zevidence = self._fix_negative_values(
-            VR.sum(4).sum(3).sum(1).sum(0) + self.alphaZ - 1)
+        Zevidence = self._fix_negative_values(self.VRW.sum(2).sum(0)
+                                              + self.alphaZ - 1)
         initialZ = normalize(Zevidence)
         Z = self._apply_entropic_prior_and_normalize(
             initialZ, Zevidence, self.betaZ, nu=self.nu)
 
-        Wevidence = np.zeros((self.F, self.rank, self.winT))
-        VRsumt = VR.sum(1)
-        for r in xrange(self.winF):
-            Wevidence += shift(VRsumt[:,:,r,:], -r, 0, self.circularF)
-        Wevidence = self._fix_negative_values(Wevidence + self.alphaW - 1)
+        Wevidence = self._fix_negative_values(self.VRW + self.alphaW - 1)
         initialW = normalize(Wevidence, axis=[0, 2])
         W = self._apply_entropic_prior_and_normalize(
             initialW, Wevidence, self.betaW, nu=self.nu, axis=[0, 2])
 
-        Hevidence = np.zeros((self.rank, self.winF, self.T))
-        VRsumf = VR.sum(0)
-        for tau in xrange(self.winT):
-            Hevidence += shift(VRsumf[:,:,:,tau], -tau, 0,
-                               self.circularT).transpose((1,2,0))
-        Hevidence = self._fix_negative_values(Hevidence + self.alphaH - 1)
+        Hevidence = self._fix_negative_values(self.VRH.transpose((1,2,0))
+                                              + self.alphaH - 1)
         initialH = normalize(Hevidence, axis=[1, 2])
         H = self._apply_entropic_prior_and_normalize(
             initialH, Hevidence, self.betaH, nu=self.nu, axis=[1, 2])
@@ -736,46 +731,32 @@ class FactoredSIPLCA2(SIPLCA2):
         self.betaT = betaT
 
     def do_mstep(self, curriter):
-        VR = self.R * self.V[:,:,np.newaxis,np.newaxis,np.newaxis]
-
-        Zevidence = self._fix_negative_values(
-            VR.sum(4).sum(3).sum(1).sum(0) + self.alphaZ - 1)
+        Zevidence = self._fix_negative_values(self.VRW.sum(2).sum(0)
+                                              + self.alphaZ - 1)
         initialZ = normalize(Zevidence)
         Z = self._apply_entropic_prior_and_normalize(
             initialZ, Zevidence, self.betaZ, nu=self.nu)
 
         # Factored W = P(f, \tau | k) = P(f | \tau, k) P(\tau | k)
         # P(f | \tau, k)
-        Pf_evidence = np.zeros((self.F, self.rank, self.winT))
-        # P(\tau, k)
-        Ptauk_evidence= np.zeros((self.rank, self.winT))
-        VRsumt = VR.sum(1)
-        for r in xrange(self.winF):
-            tmp = shift(VRsumt[:,:,r,:], -r, 0, self.circularF)
-            Pf_evidence += tmp
-            Ptauk_evidence += tmp.sum(0)
-
-        Pf_evidence = self._fix_negative_values(Pf_evidence + self.alphaW - 1)
+        Pf_evidence = self._fix_negative_values(self.VRW + self.alphaW - 1)
         initialPf = normalize(Pf_evidence, 0)
         Pf = self._apply_entropic_prior_and_normalize(
             initialPf, Pf_evidence, self.betaW, nu=self.nu, axis=0)
 
-        Ptauk_evidence = self._fix_negative_values(Ptauk_evidence + self.alphaT - 1)
+        # P(\tau, k)
+        Ptauk_evidence = self._fix_negative_values(self.VRW.sum(0)
+                                                   + self.alphaT - 1)
         initialPtauk = normalize(Ptauk_evidence)
         Ptauk = self._apply_entropic_prior_and_normalize(
             initialPtauk, Ptauk_evidence, self.betaT, nu=self.nu)
-
         Ptaugivenk = Ptauk / Z[:,np.newaxis]
 
         # W = P(f, \tau | k)
         W = Pf * Ptaugivenk[np.newaxis,:,:]
 
-        Hevidence = np.zeros((self.rank, self.winF, self.T))
-        VRsumf = VR.sum(0)
-        for tau in xrange(self.winT):
-            Hevidence += shift(VRsumf[:,:,:,tau], -tau, 0,
-                               self.circularT).transpose((1,2,0))
-        Hevidence = self._fix_negative_values(Hevidence + self.alphaH - 1)
+        Hevidence = self._fix_negative_values(self.VRH.transpose((1,2,0))
+                                              + self.alphaH - 1)
         initialH = normalize(Hevidence, axis=[1, 2])
         H = self._apply_entropic_prior_and_normalize(
             initialH, Hevidence, self.betaH, nu=self.nu, axis=[1, 2])
@@ -796,8 +777,6 @@ class DiscreteWSIPLCA2(FactoredSIPLCA2):
 
         self.warpfactors = np.array(warpfactors, dtype=np.float)
         self.nwarp = len(self.warpfactors)
-        del self.R
-        self.VRW = np.empty((self.F, self.rank, self.winT))
         self.VRH = np.empty((self.T, self.rank, self.winF, self.nwarp))
 
         # Need to weigh each path by the number of repetitions of each
