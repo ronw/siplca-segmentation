@@ -200,7 +200,11 @@ class PLCA(object):
 
         self.F, self.T = self.V.shape
 
-        self.R = np.zeros((self.F, self.T, self.rank))
+        # Allocate the posterior distribution here, so it doesn't have
+        # to be reallocated at every iteration.  This becomes
+        # especially important for the more sophistacted models with
+        # many hidden variables.
+        self.R = np.empty((self.F, self.T, self.rank))
 
         self.alphaW = 1 + alphaW
         self.alphaZ = 1 + alphaZ
@@ -462,7 +466,7 @@ class SIPLCA(PLCA):
         self.win = win
         self.circular = circular
 
-        self.R = np.zeros((self.F, self.T, self.rank, self.win))
+        self.R = np.empty((self.F, self.T, self.rank, self.win))
 
     @staticmethod
     def reconstruct(W, Z, H, norm=1.0, circular=False):
@@ -620,7 +624,7 @@ class SIPLCA2(SIPLCA):
         # Needed for plot.
         self.circular = (self.circularF, self.circularT)
 
-        self.R = np.zeros((self.F, self.T, self.rank, self.winF, self.winT))
+        self.R = np.empty((self.F, self.T, self.rank, self.winF, self.winT))
 
     @staticmethod
     def reconstruct(W, Z, H, norm=1.0, circular=False):
@@ -792,9 +796,10 @@ class DiscreteWSIPLCA2(FactoredSIPLCA2):
 
         self.warpfactors = np.array(warpfactors, dtype=np.float)
         self.nwarp = len(self.warpfactors)
+        del self.R
         maxdelay = self.win / self.warpfactors.min() + 1
-        self.R = np.zeros((self.F, self.T, self.rank, self.winF, maxdelay,
-                           self.nwarp))
+        self.VR = np.empty((self.F, self.T, self.rank, self.winF, maxdelay,
+                            self.nwarp))
 
         # Need to weigh each path by the number of repetitions of each
         # tau.  Keep track of it here.
@@ -835,12 +840,12 @@ class DiscreteWSIPLCA2(FactoredSIPLCA2):
                     recon += np.dot(Wshifted[:,:,tau] * Z,
                                     shift(H[:,r,n,:], delay, 1, circularT)
                                     * self.tauproportions[n][delay])
-        return recon
+        return norm * recon
 
     def initialize(self):
         W, Z, H = super(DiscreteWSIPLCA2, self).initialize()
-        H = np.random.rand(self.rank, self.winF, self.nwarp, self.T)
-        H /= H.sum(3).sum(2).sum(1)[:,np.newaxis,np.newaxis,np.newaxis] + EPS
+        H = normalize(np.random.rand(self.rank, self.winF, self.nwarp, self.T),
+                      axis=[1, 2, 3])
         return W, Z, H
 
     def do_estep(self, W, Z, H):
@@ -855,40 +860,26 @@ class DiscreteWSIPLCA2(FactoredSIPLCA2):
                 for delay, tau in enumerate(self.taus[n]):
                     Hshifted = (shift(H[:,r,n,:], delay, 1, self.circularT)
                                 * self.tauproportions[n][delay])# / warp) # FIXME
-                    self.R[:,:,:,r,delay,n] = (
+                    self.VR[:,:,:,r,delay,n] = (
                         WZshifted[:,:,tau][:,:,np.newaxis]
                         * Hshifted[np.newaxis,:,:]).transpose((0,2,1))
-        self.R /= WZH[:,:,np.newaxis,np.newaxis,np.newaxis,np.newaxis] + EPS
+        self.VR /= (WZH / self.V)[:,:,np.newaxis,np.newaxis,np.newaxis,np.newaxis] + EPS
 
         return logprob, WZH
 
     def do_mstep(self, curriter):
-        VR = self.R * self.V[:,:,np.newaxis,np.newaxis,np.newaxis,np.newaxis]
-
+        VRsumt = self.VR.sum(1)
         Zevidence = self._fix_negative_values(
-            VR.sum(5).sum(4).sum(3).sum(1).sum(0) + self.alphaZ - 1)
+            VRsumt.sum(4).sum(3).sum(2).sum(0) + self.alphaZ - 1)
         initialZ = normalize(Zevidence)
         Z = self._apply_entropic_prior_and_normalize(
             initialZ, Zevidence, self.betaZ, nu=self.nu)
-
-        # Wevidence = np.zeros((self.F, self.rank, self.winT))
-        # VRsumt = VR.sum(1)
-        # for r in xrange(self.winF):
-        #     for n, warp in enumerate(self.warpfactors):
-        #         for delay, tau in enumerate(self.taus[n]):
-        #             Wevidence[:,:,tau] += shift(VRsumt[:,:,r,delay,n], -r, 0,
-        #                                         self.circularF)
-        # Wevidence = self._fix_negative_values(Wevidence + self.alphaW - 1)
-        # initialW = normalize(Wevidence, axis=[0, 2])
-        # W = self._apply_entropic_prior_and_normalize(
-        #     initialW, Wevidence, self.betaW, nu=self.nu, axis=[0, 2])
 
         # Factored W = P(f, \tau | k) = P(f | \tau, k) P(\tau | k)
         # P(f | \tau, k)
         Pf_evidence = np.zeros((self.F, self.rank, self.winT))
         # P(\tau, k)
         Ptauk_evidence= np.zeros((self.rank, self.winT))
-        VRsumt = VR.sum(1)
         for r in xrange(self.winF):
             for n, warp in enumerate(self.warpfactors):
                 for delay, tau in enumerate(self.taus[n]):
@@ -913,7 +904,7 @@ class DiscreteWSIPLCA2(FactoredSIPLCA2):
 
 
         Hevidence = np.zeros((self.rank, self.winF, self.nwarp, self.T))
-        VRsumf = VR.sum(0)
+        VRsumf = self.VR.sum(0)
         for n, warp in enumerate(self.warpfactors):
             for delay, tau in enumerate(self.taus[n]):
                 Hevidence[:,:,n,:] += shift(VRsumf[:,:,:,delay,n], -delay, 0,
