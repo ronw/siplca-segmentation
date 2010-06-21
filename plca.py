@@ -854,7 +854,7 @@ class DiscreteWSIPLCA2(SIPLCA2):
             WZshifted = shift(WZ, r, 0, self.circularF)
             for n, warp in enumerate(self.warpfactors):
                 for delay, tau in enumerate(self.taus[n]):
-                    Hshifted = (shift(H[:,r,n,:], tau, 1, self.circularT)
+                    Hshifted = (shift(H[:,r,n,:], delay, 1, self.circularT)
                                 * self.tauproportions[n][delay])# / warp) # FIXME
                     self.R[:,:,:,r,delay,n] = (
                         WZshifted[:,:,tau][:,:,np.newaxis]
