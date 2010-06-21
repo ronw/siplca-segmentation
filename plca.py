@@ -392,8 +392,7 @@ class PLCA(object):
 
     def _prune_undeeded_bases(self, W, Z, H, curriter):
         """Discards bases which do not contribute to the decomposition"""
-        #threshold = 10 * EPS
-        threshold = -1
+        threshold = 10 * EPS
         zidx = np.argwhere(Z > threshold).flatten()
         if len(zidx) < self.rank and curriter >= self.minpruneiter:
             logger.info('Rank decreased from %d to %d during iteration %d',
