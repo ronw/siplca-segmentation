@@ -761,10 +761,10 @@ class FactoredSIPLCA2(SIPLCA2):
         Ptauk = self._apply_entropic_prior_and_normalize(
             initialPtauk, Ptauk_evidence, self.betaT, nu=self.nu)
 
-        PTgivenk = Ptauk / Z[:,np.newaxis]
+        Ptaugivenk = Ptauk / Z[:,np.newaxis]
 
         # W = P(f, \tau | k)
-        W = Pf * PTgivenk[np.newaxis,:,:]
+        W = Pf * Ptaugivenk[np.newaxis,:,:]
 
         Hevidence = np.zeros((self.rank, self.winF, self.T))
         VRsumf = VR.sum(0)
@@ -779,7 +779,7 @@ class FactoredSIPLCA2(SIPLCA2):
         return self._prune_undeeded_bases(W, Z, H, curriter)
 
 
-class DiscreteWSIPLCA2(SIPLCA2):
+class DiscreteWSIPLCA2(FactoredSIPLCA2):
     """Sparse (Time) Warp and 2D Shift-Invariant PLCA
 
     See Also
@@ -788,7 +788,7 @@ class DiscreteWSIPLCA2(SIPLCA2):
     SIPLCA2 : 2D SIPLCA
     """ 
     def __init__(self, V, rank, warpfactors=[1], **kwargs):
-        SIPLCA2.__init__(self, V, rank, **kwargs)
+        FactoredSIPLCA2.__init__(self, V, rank, **kwargs)
 
         self.warpfactors = np.array(warpfactors, dtype=np.float)
         self.nwarp = len(self.warpfactors)
@@ -805,7 +805,6 @@ class DiscreteWSIPLCA2(SIPLCA2):
 
             currtauproportions = np.empty(len(currtaus))
             for m,tau in enumerate(currtaus):
-                #currtauproportions[m] = (1.0 / np.ceil(warp)) / np.sum(currtaus == tau)
                 currtauproportions[m] = 1.0 / np.sum(currtaus == tau)
 
             self.taus.append([int(x) for x in currtaus])
@@ -872,17 +871,46 @@ class DiscreteWSIPLCA2(SIPLCA2):
         Z = self._apply_entropic_prior_and_normalize(
             initialZ, Zevidence, self.betaZ, nu=self.nu)
 
-        Wevidence = np.zeros((self.F, self.rank, self.winT))
+        # Wevidence = np.zeros((self.F, self.rank, self.winT))
+        # VRsumt = VR.sum(1)
+        # for r in xrange(self.winF):
+        #     for n, warp in enumerate(self.warpfactors):
+        #         for delay, tau in enumerate(self.taus[n]):
+        #             Wevidence[:,:,tau] += shift(VRsumt[:,:,r,delay,n], -r, 0,
+        #                                         self.circularF)
+        # Wevidence = self._fix_negative_values(Wevidence + self.alphaW - 1)
+        # initialW = normalize(Wevidence, axis=[0, 2])
+        # W = self._apply_entropic_prior_and_normalize(
+        #     initialW, Wevidence, self.betaW, nu=self.nu, axis=[0, 2])
+
+        # Factored W = P(f, \tau | k) = P(f | \tau, k) P(\tau | k)
+        # P(f | \tau, k)
+        Pf_evidence = np.zeros((self.F, self.rank, self.winT))
+        # P(\tau, k)
+        Ptauk_evidence= np.zeros((self.rank, self.winT))
         VRsumt = VR.sum(1)
         for r in xrange(self.winF):
             for n, warp in enumerate(self.warpfactors):
                 for delay, tau in enumerate(self.taus[n]):
-                    Wevidence[:,:,tau] += shift(VRsumt[:,:,r,delay,n], -r, 0,
-                                                self.circularF)
-        Wevidence = self._fix_negative_values(Wevidence + self.alphaW - 1)
-        initialW = normalize(Wevidence, axis=[0, 2])
-        W = self._apply_entropic_prior_and_normalize(
-            initialW, Wevidence, self.betaW, nu=self.nu, axis=[0, 2])
+                    tmp = shift(VRsumt[:,:,r,delay,n], -r, 0, self.circularF)
+                    Pf_evidence[:,:,tau] += tmp
+                    Ptauk_evidence[:,tau] += tmp.sum(0)
+
+        Pf_evidence = self._fix_negative_values(Pf_evidence + self.alphaW - 1)
+        initialPf = normalize(Pf_evidence, 0)
+        Pf = self._apply_entropic_prior_and_normalize(
+            initialPf, Pf_evidence, self.betaW, nu=self.nu, axis=0)
+
+        Ptauk_evidence = self._fix_negative_values(Ptauk_evidence + self.alphaT - 1)
+        initialPtauk = normalize(Ptauk_evidence)
+        Ptauk = self._apply_entropic_prior_and_normalize(
+            initialPtauk, Ptauk_evidence, self.betaT, nu=self.nu)
+
+        Ptaugivenk = Ptauk / Z[:,np.newaxis]
+
+        # W = P(f, \tau | k)
+        W = Pf * Ptaugivenk[np.newaxis,:,:]
+
 
         Hevidence = np.zeros((self.rank, self.winF, self.nwarp, self.T))
         VRsumf = VR.sum(0)
