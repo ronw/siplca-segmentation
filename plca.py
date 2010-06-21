@@ -507,8 +507,8 @@ class SIPLCA(PLCA):
         
         plots = [None] * (2*nrows + 2)
         titles=plots + ['H%d' % x for x in range(rank)]
-        if H.ndim < 4:
-            plots.extend(H)
+        if np.squeeze(H).ndim < 4:
+            plots.extend(np.squeeze(H))
         else:
             plots.extend(H.sum(2))
         plottools.plotall(plots, subplot=(nrows, 3), order='c', align='xy',
