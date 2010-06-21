@@ -797,9 +797,8 @@ class DiscreteWSIPLCA2(FactoredSIPLCA2):
         self.warpfactors = np.array(warpfactors, dtype=np.float)
         self.nwarp = len(self.warpfactors)
         del self.R
-        maxdelay = self.win / self.warpfactors.min() + 1
-        self.VR = np.empty((self.F, self.T, self.rank, self.winF, maxdelay,
-                            self.nwarp))
+        self.VRW = np.empty((self.F, self.rank, self.winT))
+        self.VRH = np.empty((self.T, self.rank, self.winF, self.nwarp))
 
         # Need to weigh each path by the number of repetitions of each
         # tau.  Keep track of it here.
@@ -854,62 +853,52 @@ class DiscreteWSIPLCA2(FactoredSIPLCA2):
         logprob = self.compute_logprob(W, Z, H, WZH)
 
         WZ = W * Z[np.newaxis,:,np.newaxis]
+        VdivWZH = (self.V / (WZH + EPS))[:,:,np.newaxis]
+        self.VRW[:,:,:] = 0
+        self.VRH[:,:,:,:] = 0
         for r in xrange(self.winF):
             WZshifted = shift(WZ, r, 0, self.circularF)
             for n, warp in enumerate(self.warpfactors):
                 for delay, tau in enumerate(self.taus[n]):
                     Hshifted = (shift(H[:,r,n,:], delay, 1, self.circularT)
                                 * self.tauproportions[n][delay])# / warp) # FIXME
-                    self.VR[:,:,:,r,delay,n] = (
-                        WZshifted[:,:,tau][:,:,np.newaxis]
-                        * Hshifted[np.newaxis,:,:]).transpose((0,2,1))
-        self.VR /= (WZH / self.V)[:,:,np.newaxis,np.newaxis,np.newaxis,np.newaxis] + EPS
-
+                    tmp = ((WZshifted[:,:,tau][:,:,np.newaxis]
+                            * Hshifted[np.newaxis,:,:]).transpose((0,2,1))
+                           * VdivWZH)
+                    self.VRW[:,:,tau] += shift(tmp.sum(1), -r, 0,
+                                               self.circularF)
+                    self.VRH[:,:,r,n] += shift(tmp.sum(0), -delay, 0,
+                                               self.circularT)
+                    
         return logprob, WZH
 
     def do_mstep(self, curriter):
-        VRsumt = self.VR.sum(1)
-        Zevidence = self._fix_negative_values(
-            VRsumt.sum(4).sum(3).sum(2).sum(0) + self.alphaZ - 1)
+        Zevidence = self._fix_negative_values(self.VRW.sum(2).sum(0)
+                                              + self.alphaZ - 1)
         initialZ = normalize(Zevidence)
         Z = self._apply_entropic_prior_and_normalize(
             initialZ, Zevidence, self.betaZ, nu=self.nu)
 
         # Factored W = P(f, \tau | k) = P(f | \tau, k) P(\tau | k)
         # P(f | \tau, k)
-        Pf_evidence = np.zeros((self.F, self.rank, self.winT))
-        # P(\tau, k)
-        Ptauk_evidence= np.zeros((self.rank, self.winT))
-        for r in xrange(self.winF):
-            for n, warp in enumerate(self.warpfactors):
-                for delay, tau in enumerate(self.taus[n]):
-                    tmp = shift(VRsumt[:,:,r,delay,n], -r, 0, self.circularF)
-                    Pf_evidence[:,:,tau] += tmp
-                    Ptauk_evidence[:,tau] += tmp.sum(0)
-
-        Pf_evidence = self._fix_negative_values(Pf_evidence + self.alphaW - 1)
+        Pf_evidence = self._fix_negative_values(self.VRW + self.alphaW - 1)
         initialPf = normalize(Pf_evidence, 0)
         Pf = self._apply_entropic_prior_and_normalize(
             initialPf, Pf_evidence, self.betaW, nu=self.nu, axis=0)
 
-        Ptauk_evidence = self._fix_negative_values(Ptauk_evidence + self.alphaT - 1)
+        # P(\tau, k)
+        Ptauk_evidence = self._fix_negative_values(self.VRW.sum(0)
+                                                   + self.alphaT - 1)
         initialPtauk = normalize(Ptauk_evidence)
         Ptauk = self._apply_entropic_prior_and_normalize(
             initialPtauk, Ptauk_evidence, self.betaT, nu=self.nu)
-
         Ptaugivenk = Ptauk / Z[:,np.newaxis]
 
         # W = P(f, \tau | k)
         W = Pf * Ptaugivenk[np.newaxis,:,:]
 
-
-        Hevidence = np.zeros((self.rank, self.winF, self.nwarp, self.T))
-        VRsumf = self.VR.sum(0)
-        for n, warp in enumerate(self.warpfactors):
-            for delay, tau in enumerate(self.taus[n]):
-                Hevidence[:,:,n,:] += shift(VRsumf[:,:,:,delay,n], -delay, 0,
-                                            self.circularT).transpose((1,2,0))
-        Hevidence = self._fix_negative_values(Hevidence + self.alphaH - 1)
+        Hevidence = self._fix_negative_values(
+            self.VRH.transpose((1,2,3,0)) + self.alphaH - 1)
         initialH = normalize(Hevidence, axis=[1, 2, 3])
         H = self._apply_entropic_prior_and_normalize(
             initialH, Hevidence, self.betaH, nu=self.nu, axis=[1, 2, 3])
