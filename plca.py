@@ -150,10 +150,10 @@ class PLCA(object):
     >>> V = plca.PLCA.reconstruct(trueW, trueZ, trueH)
 
     Perform the decomposition:
-    >>> W, Z, H, norm, recon, divergence = plca.PLCA.analyze(V, rank=rank)
-    INFO:plca:Iteration 0: divergence = 8.784769
-    INFO:plca:Iteration 50: divergence = 8.450114
-    INFO:plca:Iteration 99: final divergence = 8.449504
+    >>> W, Z, H, norm, recon, logprob = plca.PLCA.analyze(V, rank=rank)
+    INFO:plca:Iteration 0: logprob = 8.784769
+    INFO:plca:Iteration 50: logprob = 8.450114
+    INFO:plca:Iteration 99: final logprob = 8.449504
     
     Plot the parameters:
     >>> plt.figure(1)
@@ -236,8 +236,8 @@ class PLCA(object):
         initW, initZ, initH : array
             Initial settings for `W`, `Z`, and `H`.  Unused by default.
         printiter : int
-            Prints current divergence once every `printiter` iterations.
-            Defaults to 50.
+            Prints current log probability once every `printiter`
+            iterations.  Defaults to 50.
         plotiter : int or None
             If not None, the current decomposition is plotted once
             every `plotiter` iterations.  Defaults to None.
@@ -256,7 +256,7 @@ class PLCA(object):
             Normalization constant to make `V` sum to 1.
         recon : array
             Reconstruction of `V` using `W`, `Z`, and `H`
-        divergence : float
+        logprob : float
         """
         norm = V.sum()
         V /= norm
@@ -272,23 +272,23 @@ class PLCA(object):
         params.Z = Z
         params.H = H
     
-        olddiv = np.inf
+        oldlogprob = -np.inf
         for n in xrange(niter):
-            div, WZH = params.do_estep(W, Z, H)
+            logprob, WZH = params.do_estep(W, Z, H)
             if n % printiter == 0:
-                logger.info('Iteration %d: divergence = %f', n, div)
+                logger.info('Iteration %d: logprob = %f', n, logprob)
             if plotiter and n % plotiter == 0:
                 params.plot(V, W, Z, H, n)
                 if not plotfilename is None:
                     plt.savefig('%s_%04d.png' % (plotfilename, n))
-            if div > olddiv:
-                logger.debug('Warning: Divergence increased from %f to %f at '
-                             'iteration %d!', olddiv, div, n)
+            if logprob < oldlogprob:
+                logger.debug('Warning: logprob decreased from %f to %f at '
+                             'iteration %d!', oldlogprob, logprob, n)
                 #import pdb; pdb.set_trace()
-            elif n > 0 and olddiv - div < convergence_thresh:
+            elif n > 0 and logprob - oldlogprob < convergence_thresh:
                 logger.info('Converged at iteration %d', n)
                 break
-            olddiv = div
+            oldlogprob = logprob
     
             nW, nZ, nH = params.do_mstep(n)
     
@@ -304,9 +304,9 @@ class PLCA(object):
             params.plot(V, W, Z, H, n)
             if not plotfilename is None:
                 plt.savefig('%s_%04d.png' % (plotfilename, n))
-        logging.info('Iteration %d: final divergence = %f', n, div)
+        logging.info('Iteration %d: final logprob = %f', n, logprob)
         recon = norm * WZH
-        return W, Z, H, norm, recon, div
+        return W, Z, H, norm, recon, logprob
 
     @staticmethod
     def reconstruct(W, Z, H, norm=1.0):
@@ -332,24 +332,32 @@ class PLCA(object):
         H = normalize(np.random.rand(self.rank, self.T), 1)
         return W, Z, H
 
+    def compute_logprob(self, W, Z, H, recon):
+        logprob = np.sum(self.V * np.log(recon + EPS*recon))
+        # Add Dirichlet and Entropic priors.
+        logprob += ((self.alphaW - 1) * np.sum(np.log(W + EPS*W))
+                    + (self.alphaZ - 1) * np.sum(np.log(Z + EPS*Z))
+                    + (self.alphaH - 1) * np.sum(np.log(H + EPS*H)))
+        # Add Entropic priors.
+        logprob += (self.betaW * np.sum(W * np.log(W + EPS*W))
+                    + self.betaZ * np.sum(Z * np.log(Z + EPS*Z))
+                    + self.betaH * np.sum(H * np.log(H + EPS*H)))
+        return logprob
+
     def do_estep(self, W, Z, H):
         """Performs the E-step of the EM parameter estimation algorithm.
         
         Computes the posterior distribution over the hidden variables.
         """
         WZH = self.reconstruct(W, Z, H)
-        kldiv = kldivergence(self.V, WZH)
-        #loglik = (np.sum(self.V * np.log(WZH))
-        #          + (self.alphaW-1)*np.sum(np.log(W))
-        #          + (self.alphaZ-1)*np.sum(np.log(Z))
-        #          + (self.alphaH-1)*np.sum(np.log(H)))
+        logprob = self.compute_logprob(W, Z, H, WZH)
 
         for z in xrange(self.rank):
             self.R[:,:,z] = np.outer(W[:,z] * Z[z], H[z,:])
         # Note that self.R.sum(2) == WZH
         self.R /= self.R.sum(2)[:,:,np.newaxis]
         
-        return kldiv, WZH
+        return logprob, WZH
 
     def do_mstep(self, curriter):
         """Performs the M-step of the EM parameter estimation algorithm.
@@ -408,8 +416,8 @@ class PLCA(object):
             param = normalize(evidence + beta * nu * alpha, axis)
             #param = normalize(evidence + beta * nu * param**(nu / (nu - 1.0)), 1)
             if np.mean(np.abs(param - lastparam)) < convergence_thresh:
-                logger.debug('M-step finished after iteration %d (beta=%f)',
-                             i, beta)
+                logger.log(logging.DEBUG-1, 'M-step finished after iteration '
+                           '%d (beta=%f)', i, beta)
                 break
         return param
 
@@ -518,11 +526,7 @@ class SIPLCA(PLCA):
 
     def do_estep(self, W, Z, H):
         WZH = self.reconstruct(W, Z, H, circular=self.circular)
-        kldiv = kldivergence(self.V, WZH)
-        #loglik = (np.sum(self.V * np.log(WZH))
-        #          + (self.alphaW-1)*np.sum(np.log(W))
-        #          + (self.alphaZ-1)*np.sum(np.log(Z))
-        #          + (self.alphaH-1)*np.sum(np.log(H)))
+        logprob = self.compute_logprob(W, Z, H, WZH)
 
         for tau in xrange(self.win):
             Ht = shift(H, tau, 1, self.circular) * Z[:,np.newaxis]
@@ -530,7 +534,7 @@ class SIPLCA(PLCA):
                 self.R[:,:,z,tau] = np.outer(W[:,z,tau], Ht[z,:])
         self.R /= self.R.sum(3).sum(2)[:,:,np.newaxis,np.newaxis]
 
-        return kldiv, WZH
+        return logprob, WZH
 
     def do_mstep(self, curriter):
         VR = self.R * (self.V[:,:,np.newaxis,np.newaxis] + EPS)
@@ -661,11 +665,7 @@ class SIPLCA2(SIPLCA):
     def do_estep(self, W, Z, H):
         WZH = self.reconstruct(W, Z, H,
                                circular=[self.circularF, self.circularT])
-        kldiv = kldivergence(self.V, WZH)
-        #loglik = (np.sum(self.V * np.log(WZH))
-        #          + (self.alphaW-1)*np.sum(np.log(W))
-        #          + (self.alphaZ-1)*np.sum(np.log(Z))
-        #          + (self.alphaH-1)*np.sum(np.log(H)))
+        logprob = self.compute_logprob(W, Z, H, WZH)
 
         WZ = W * Z[np.newaxis,:,np.newaxis]
         for tauF in xrange(self.winF):
@@ -678,7 +678,7 @@ class SIPLCA2(SIPLCA):
         self.R /= (EPS +
             self.R.sum(4).sum(3).sum(2)[:,:,np.newaxis,np.newaxis,np.newaxis])
 
-        return kldiv, WZH
+        return logprob, WZH
 
     def do_mstep(self, curriter):
         VR = self.R * self.V[:,:,np.newaxis,np.newaxis,np.newaxis]
@@ -848,7 +848,7 @@ class DiscreteWSIPLCA2(SIPLCA2):
     def do_estep(self, W, Z, H):
         WZH = self.reconstruct(W, Z, H,
                                circular=[self.circularF, self.circularT])
-        kldiv = kldivergence(self.V, WZH)
+        logprob = self.compute_logprob(W, Z, H, WZH)
 
         WZ = W * Z[np.newaxis,:,np.newaxis]
         for r in xrange(self.winF):
@@ -862,7 +862,7 @@ class DiscreteWSIPLCA2(SIPLCA2):
                         * Hshifted[np.newaxis,:,:]).transpose((0,2,1))
         self.R /= WZH[:,:,np.newaxis,np.newaxis,np.newaxis,np.newaxis] + EPS
 
-        return kldiv, WZH
+        return logprob, WZH
 
     def do_mstep(self, curriter):
         VR = self.R * self.V[:,:,np.newaxis,np.newaxis,np.newaxis,np.newaxis]
