@@ -308,7 +308,7 @@ class PLCA(object):
             params.plot(V, W, Z, H, n)
             if not plotfilename is None:
                 plt.savefig('%s_%04d.png' % (plotfilename, n))
-        logging.info('Iteration %d: final logprob = %f', n, logprob)
+        logger.info('Iteration %d: final logprob = %f', n, logprob)
         recon = norm * WZH
         return W, Z, H, norm, recon, logprob
 
