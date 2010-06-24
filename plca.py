@@ -405,7 +405,7 @@ class PLCA(object):
             Z = Z[zidx]
             W = W[:,zidx]
             H = H[zidx,:]
-            self.R = self.R[:,:,zidx]
+            #self.R = self.R[:,:,zidx]
         return W, Z, H
 
     @staticmethod
@@ -466,7 +466,9 @@ class SIPLCA(PLCA):
         self.win = win
         self.circular = circular
 
-        self.R = np.empty((self.F, self.T, self.rank, self.win))
+        del self.R
+        self.VRW = np.empty((self.F, self.rank, self.win))
+        self.VRH = np.empty((self.T, self.rank))
 
     @staticmethod
     def reconstruct(W, Z, H, norm=1.0, circular=False):
@@ -531,32 +533,31 @@ class SIPLCA(PLCA):
         WZH = self.reconstruct(W, Z, H, circular=self.circular)
         logprob = self.compute_logprob(W, Z, H, WZH)
 
+        WZ = W * Z[np.newaxis,:,np.newaxis]
+        VdivWZH = (self.V / (WZH + EPS))[:,:,np.newaxis]
+        self.VRW[:] = 0
+        self.VRH[:] = 0
         for tau in xrange(self.win):
-            Ht = shift(H, tau, 1, self.circular) * Z[:,np.newaxis]
-            for z in xrange(self.rank):
-                self.R[:,:,z,tau] = np.outer(W[:,z,tau], Ht[z,:])
-        self.R /= self.R.sum(3).sum(2)[:,:,np.newaxis,np.newaxis]
+            Ht = shift(H, tau, 1, self.circular)
+            tmp = WZ[:,:,tau][:,np.newaxis,:] * Ht.T[np.newaxis,:,:] * VdivWZH
+            self.VRW[:,:,tau] += tmp.sum(1)
+            self.VRH += shift(tmp.sum(0), -tau, 0, self.circular)
 
         return logprob, WZH
 
     def do_mstep(self, curriter):
-        VR = self.R * (self.V[:,:,np.newaxis,np.newaxis] + EPS)
-
-        Zevidence = self._fix_negative_values(VR.sum(3).sum(1).sum(0)
+        Zevidence = self._fix_negative_values(self.VRW.sum(2).sum(0)
                                               + self.alphaZ - 1)
         initialZ = normalize(Zevidence)
         Z = self._apply_entropic_prior_and_normalize(
             initialZ, Zevidence, self.betaZ, nu=self.nu)
 
-        Wevidence = self._fix_negative_values(VR.sum(1) + self.alphaW - 1)
+        Wevidence = self._fix_negative_values(self.VRW + self.alphaW - 1)
         initialW = normalize(Wevidence, axis=[0, 2])
         W = self._apply_entropic_prior_and_normalize(
             initialW, Wevidence, self.betaW, nu=self.nu, axis=[0, 2])
 
-        Hevidence = np.zeros((self.rank, self.T))
-        for tau in xrange(self.win):
-            Hevidence += shift(VR[:,:,:,tau].sum(0), -tau, 0, self.circular).T
-        Hevidence = self._fix_negative_values(Hevidence + self.alphaH - 1)
+        Hevidence = self._fix_negative_values(self.VRH.T + self.alphaH - 1)
         initialH = normalize(Hevidence, axis=1)
         H = self._apply_entropic_prior_and_normalize(
             initialH, Hevidence, self.betaH, nu=self.nu, axis=1)
@@ -674,8 +675,8 @@ class SIPLCA2(SIPLCA):
 
         WZ = W * Z[np.newaxis,:,np.newaxis]
         VdivWZH = (self.V / (WZH + EPS))[:,:,np.newaxis]
-        self.VRW[:,:,:] = 0
-        self.VRH[:,:,:] = 0
+        self.VRW[:] = 0
+        self.VRH[:] = 0
         for r in xrange(self.winF):
             WZshifted = shift(WZ, r, 0, self.circularF)
             for tau in xrange(self.winT):
@@ -833,8 +834,8 @@ class DiscreteWSIPLCA2(FactoredSIPLCA2):
 
         WZ = W * Z[np.newaxis,:,np.newaxis]
         VdivWZH = (self.V / (WZH + EPS))[:,:,np.newaxis]
-        self.VRW[:,:,:] = 0
-        self.VRH[:,:,:,:] = 0
+        self.VRW[:] = 0
+        self.VRH[:] = 0
         for r in xrange(self.winF):
             WZshifted = shift(WZ, r, 0, self.circularF)
             for n, warp in enumerate(self.warpfactors):
