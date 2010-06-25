@@ -211,8 +211,8 @@ class PLCA(object):
         self.alphaH = 1 + alphaH
 
         if betaW < 0 or betaZ < 0 or betaH < 0:
-            raise (ValueError, 'Entropic prior parameters beta{W,Z,H} must be '
-                   'non-negative')
+            raise ValueError('Entropic prior parameters beta{W,Z,H} must be '
+                             'non-negative')
         self.betaW = betaW
         self.betaZ = betaZ
         self.betaH = betaH
