@@ -257,6 +257,49 @@ def nmf_analysis_to_segmentation(seq, win, W, Z, H, min_segment_length=32,
 
     return labels, segfun
 
+def nmf_analysis_to_segmentation_using_viterbi_path(seq, win, W, Z, H,
+                                                    selfloopprob=0.9,
+                                                    use_Z_for_segmentation=True,
+                                                    min_segment_length=32,
+                                                    **ignored_kwargs):
+    if not use_Z_for_segmentation:
+        Z = np.ones(Z.shape)
+
+    rank = len(Z)
+    T = H.shape[1]
+    likelihood = np.empty((rank, T))
+    for z in xrange(rank):
+        likelihood[z] = plca.SIPLCA.reconstruct(W[:,z], Z[z], H[z]).sum(0)
+
+    transmat = np.zeros((rank, rank))
+    for z in xrange(rank):
+        transmat[z,:] = (1 - selfloopprob) / (rank - 1.0)
+        transmat[z,z] = selfloopprob
+
+    # Find Viterbi path.
+    loglikelihood = np.log(likelihood)
+    logtransmat = np.log(transmat)
+    lattice = np.zeros(loglikelihood.shape)
+    traceback = np.zeros(loglikelihood.shape, dtype=np.int) 
+    lattice[0] = loglikelihood[0]
+    for n in xrange(1, T):
+        pr = logtransmat.T + lattice[:n-1]
+        lattice[:,n] = np.max(pr, axis=0) + loglikelihood[:,n]
+        traceback[:,n] = np.argmax(pr, axis=0)
+
+    # Do traceback to find most likely path.
+    reverse_state_sequence = []
+    s = lattice[:,-1].argmax()
+    for frame in reversed(traceback.T):
+        reverse_state_sequence.append(s)
+        s = frame[s]
+    labels = list(reversed(reverse_state_sequence))
+
+    remove_short_segments(labels, min_segment_length)
+
+    return labels, likelihood
+
+
 def remove_short_segments(labels, min_segment_length):
     """Remove segments shorter than min_segment_length."""
     segment_borders = np.nonzero(np.diff(labels))[0]
