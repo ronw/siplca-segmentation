@@ -24,6 +24,23 @@ General Public License.  See the file COPYING for details.
 
 Example usage
 -------------
+
+From the command line
+`````````````````````
+segmenter.py can be run as a script to run the structure segmentation
+algorithm on a single audio file.  The usage is as follows:
+
+segmenter.py -i inputfile.wav -o outputfile [-param1 val1] [-param2 val2] ...
+
+Where parameters "-param1", etc. are optional and are defined in the
+docstring for segmenter.segment_song.
+    
+For MIREX 2010, please run the shell script runme_mirex2010.sh as follows:
+runme_mirex2010.sh inputfile.wav outputfile
+
+
+From Python
+`````````
 >>> import segmenter
 >>> wavfile = '/path/to/come_together.wav'
 >>> rank = 4  # rank corresponds to the number of segments
