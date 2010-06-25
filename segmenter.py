@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 # Copyright (C) 2009-2010 Ron J. Weiss (ronw@nyu.edu)
 #
 # This program is free software: you can redistribute it and/or modify
@@ -85,7 +87,9 @@ import scipy.io
 
 import plca
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO,
+                    format='%(levelname)s %(name)s %(asctime)s '
+                    '%(filename)s:%(lineno)d  %(message)s')
 logger = logging.getLogger('segmenter')
 
 try:
@@ -101,12 +105,14 @@ def extract_features(wavfilename, fctr=400, fsd=1.0, type=1):
 
     Calls Dan Ellis' chrombeatftrs Matlab function.
     """
+    logger.info('Extracting beat-synchronous chroma features from %s',
+                wavfilename)
     x,fs = mlab.wavread(wavfilename, nout=2)
     feats,beats = mlab.chrombeatftrs(x, fs, fctr, fsd, type, nout=2)
     return feats, beats.flatten()
 
-def segment_song(seq, win, nrep=1, minsegments=3, maxlowen=10, maxretries=5,
-                 uninformativeWinit=False, uninformativeHinit=True, 
+def segment_song(seq, rank=4, win=32, nrep=1, minsegments=3, maxretries=5,
+                 maxlowen=10, uninformativeWinit=False, uninformativeHinit=True,
                  normalize_frames=True, viterbi_segmenter=False, **kwargs):
     """Segment the given feature sequence using SI-PLCA
 
@@ -114,6 +120,8 @@ def segment_song(seq, win, nrep=1, minsegments=3, maxlowen=10, maxretries=5,
     ----------
     seq : array, shape (F, T)
         Feature sequence to segment.
+    rank : int
+        Number of patterns (unique segments) to search for.        
     win : int
         Length of patterns in frames.
     nrep : int
@@ -180,7 +188,6 @@ def segment_song(seq, win, nrep=1, minsegments=3, maxlowen=10, maxretries=5,
         del kwargs['alphaWcutoff']
         del kwargs['alphaWslope']
 
-    rank = kwargs['rank']
     F, T = seq.shape
     if uninformativeWinit:
         kwargs['initW'] = np.ones((F, rank, win)) / F*win
@@ -189,7 +196,7 @@ def segment_song(seq, win, nrep=1, minsegments=3, maxlowen=10, maxretries=5,
         
     outputs = []
     for n in xrange(nrep):
-        outputs.append(plca.SIPLCA.analyze(seq, win=win, **kwargs))
+        outputs.append(plca.SIPLCA.analyze(seq, rank=rank, win=win, **kwargs))
     div = [x[-1] for x in outputs]
     W, Z, H, norm, recon, div = outputs[np.argmin(div)]
 
@@ -207,7 +214,8 @@ def segment_song(seq, win, nrep=1, minsegments=3, maxlowen=10, maxretries=5,
                     'low energy frames = %d).', len(Z), nlowen_recon)
         outputs = []
         for n in xrange(nrep):
-            outputs.append(plca.SIPLCA.analyze(seq, win=win, **kwargs))
+            outputs.append(plca.SIPLCA.analyze(seq, rank=rank, win=win,
+                                               **kwargs))
         div = [x[-1] for x in outputs]
         W, Z, H, norm, recon, div = outputs[np.argmin(div)]
         nlowen_recon = np.sum(recon.sum(0) <= lowen)
@@ -388,7 +396,8 @@ def convert_labels_to_segments(labels, frametimes):
     segendtimes = boundarytimes[1:]
     seglabels = labels[boundaryidx[1:]]
 
-    segments = ['%.4f %.4f segment%d' % (start, end, label)
+    labels = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    segments = ['%.4f\t%.4f\t%s' % (start, end, labels[label])
                 for start,end,label in zip(segstarttimes,segendtimes,seglabels)]
     return '\n'.join(segments)
     
@@ -401,8 +410,44 @@ def segment_wavfile(wavfile, **kwargs):
     """
     features, beattimes = extract_features(wavfile)
     labels, W, Z, H, segfun, norm = segment_song(features, **kwargs)
-    print sorted(labels)
     segments = convert_labels_to_segments(labels, beattimes)
     return segments
 
 
+def _parse_args(args):
+    if len(args) < 4 or len(args) % 2 == 1:
+        _die_with_usage()
+
+    kwargs = dict()
+    for key, value in zip(args[::2], args[1::2]):
+        if not key.startswith('-'):
+            print 'Error parsing argument "%s"' % key
+            _die_with_usage()
+        if key.lower() == '-i':
+            inputfilename = value
+        elif key.lower() == '-o':
+            outputfilename = value
+        else:
+            kwargs[key[1:]] = eval(value)
+
+    return inputfilename, outputfilename, kwargs
+
+def _die_with_usage():
+    usage = """
+    USAGE: segmenter.py -i inputfile.wav -o outputfile [-param1 val1] [-param2 val2] ...
+
+    Segments inputfile.wav using the given parameters and writes the
+    output labels to outputfile.
+    """
+    print usage
+    sys.exit(1)
+
+def _main(args):
+    inputfilename, outputfilename, kwargs = _parse_args(args)
+    output = segment_wavfile(inputfilename, **kwargs)
+    f = open(outputfilename, 'w')
+    f.write(output)
+    f.close()
+
+if __name__ == '__main__':
+    _main(sys.argv[1:])
