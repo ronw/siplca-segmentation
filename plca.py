@@ -200,11 +200,11 @@ class PLCA(object):
 
         self.F, self.T = self.V.shape
 
-        # Allocate the posterior distribution here, so it doesn't have
-        # to be reallocated at every iteration.  This becomes
-        # especially important for the more sophistacted models with
-        # many hidden variables.
-        self.R = np.empty((self.F, self.T, self.rank))
+        # Allocate the sufficient statistics here, so they don't have to be
+        # reallocated at every iteration.  This becomes especially important
+        # for the more sophistacted models with many hidden variables.
+        self.VRW = np.empty((self.F, self.rank))
+        self.VRH = np.empty((self.T, self.rank))
 
         self.alphaW = 1 + alphaW
         self.alphaZ = 1 + alphaZ
@@ -321,7 +321,7 @@ class PLCA(object):
     def plot(cls, V, W, Z, H, curriter=-1):
         WZH = cls.reconstruct(W, Z, H)
         plottools.plotall([V, WZH], subplot=(3,1), align='xy', cmap=plt.cm.hot)
-        plottools.plotall(9  * [None] + [W, Z, H], subplot=(4,3), clf=False,
+        plottools.plotall(9 * [None] + [W, Z, H], subplot=(4,3), clf=False,
                           align='', cmap=plt.cm.hot, colorbar=False)
         plt.draw()
 
@@ -356,10 +356,11 @@ class PLCA(object):
         WZH = self.reconstruct(W, Z, H)
         logprob = self.compute_logprob(W, Z, H, WZH)
 
+        VdivWZH = self.V / WZH
         for z in xrange(self.rank):
-            self.R[:,:,z] = np.outer(W[:,z] * Z[z], H[z,:])
-        # Note that self.R.sum(2) == WZH
-        self.R /= self.R.sum(2)[:,:,np.newaxis]
+            tmp = np.outer(W[:,z] * Z[z], H[z,:]) * VdivWZH
+            self.VRW[:,z] = tmp.sum(1)
+            self.VRH[:,z] = tmp.sum(0)
         
         return logprob, WZH
 
@@ -369,20 +370,17 @@ class PLCA(object):
         Computes updated estimates of W, Z, and H using the posterior
         distribution computer in the E-step.
         """
-        VR = self.R * self.V[:,:,np.newaxis]
-
-        Zevidence = self._fix_negative_values(VR.sum(1).sum(0)
-                                              + self.alphaZ - 1)
+        Zevidence = self._fix_negative_values(self.VRW.sum(0) + self.alphaZ - 1)
         initialZ = normalize(Zevidence)
         Z = self._apply_entropic_prior_and_normalize(
             initialZ, Zevidence, self.betaZ, nu=self.nu)
 
-        Wevidence = self._fix_negative_values(VR.sum(1) + self.alphaW - 1)
+        Wevidence = self._fix_negative_values(self.VRW + self.alphaW - 1)
         initialW = normalize(Wevidence, axis=0)
         W = self._apply_entropic_prior_and_normalize(
             initialW, Wevidence, self.betaW, nu=self.nu, axis=0)
 
-        Hevidence = self._fix_negative_values(VR.sum(0).T + self.alphaH - 1)
+        Hevidence = self._fix_negative_values(self.VRH.T + self.alphaH - 1)
         initialH = normalize(Hevidence, axis=1)
         H = self._apply_entropic_prior_and_normalize(
             initialH, Hevidence, self.betaH, nu=self.nu, axis=1)
@@ -405,7 +403,8 @@ class PLCA(object):
             Z = Z[zidx]
             W = W[:,zidx]
             H = H[zidx,:]
-            #self.R = self.R[:,:,zidx]
+            self.VRW = self.VRW[:,zidx]
+            self.VRH = self.VRH[:,zidx]
         return W, Z, H
 
     @staticmethod
@@ -466,7 +465,6 @@ class SIPLCA(PLCA):
         self.win = win
         self.circular = circular
 
-        del self.R
         self.VRW = np.empty((self.F, self.rank, self.win))
         self.VRH = np.empty((self.T, self.rank))
 
@@ -625,7 +623,6 @@ class SIPLCA2(SIPLCA):
         # Needed for plot.
         self.circular = (self.circularF, self.circularT)
 
-        del self.R
         self.VRW = np.empty((self.F, self.rank, self.winT))
         self.VRH = np.empty((self.T, self.rank, self.winF))
 
