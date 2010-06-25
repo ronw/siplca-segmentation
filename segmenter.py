@@ -107,7 +107,7 @@ def extract_features(wavfilename, fctr=400, fsd=1.0, type=1):
 
 def segment_song(seq, win, nrep=1, minsegments=3, maxlowen=10, maxretries=5,
                  uninformativeWinit=False, uninformativeHinit=True, 
-                 normalize_frames=True, **kwargs):
+                 normalize_frames=True, viterbi_segmenter=False, **kwargs):
     """Segment the given feature sequence using SI-PLCA
 
     Parameters
@@ -139,6 +139,10 @@ def segment_song(seq, win, nrep=1, minsegments=3, maxlowen=10, maxretries=5,
     normalize_frames : boolean
         If True, normalizes each frame of `seq` so that the maximum
         value is 1.  Defaults to True.
+    viterbi_segmenter : boolean
+        If True uses uses the Viterbi algorithm to convert SIPLCA
+        decomposition into segmentation, otherwises uses the process
+        described in [1].  Defaults to False.
     kwargs : dict
         Keyword arguments passed to plca.SIPLCA.analyze.  See
         plca.SIPLCA for more details.
@@ -208,7 +212,11 @@ def segment_song(seq, win, nrep=1, minsegments=3, maxlowen=10, maxretries=5,
         W, Z, H, norm, recon, div = outputs[np.argmin(div)]
         nlowen_recon = np.sum(recon.sum(0) <= lowen)
 
-    labels, segfun = nmf_analysis_to_segmentation(seq, win, W, Z, H, **kwargs)
+    if viterbi_segmenter:
+        segmentation_function = nmf_analysis_to_segmentation_using_viterbi_path
+    else:
+        segmentation_function = nmf_analysis_to_segmentation
+    labels, segfun = segmentation_function(seq, win, W, Z, H, **kwargs)
     return labels, W, Z, H, segfun, norm
 
 def create_sparse_W_prior(shape, cutoff, slope):
@@ -396,3 +404,5 @@ def segment_wavfile(wavfile, **kwargs):
     print sorted(labels)
     segments = convert_labels_to_segments(labels, beattimes)
     return segments
+
+
