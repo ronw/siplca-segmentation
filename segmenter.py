@@ -111,8 +111,9 @@ def extract_features(wavfilename, fctr=400, fsd=1.0, type=1):
     feats,beats = mlab.chrombeatftrs(x, fs, fctr, fsd, type, nout=2)
     return feats, beats.flatten()
 
-def segment_song(seq, rank=4, win=32, nrep=1, minsegments=3, maxretries=5,
-                 maxlowen=10, uninformativeWinit=False, uninformativeHinit=True,
+def segment_song(seq, rank=4, win=32, seed=None,
+                 nrep=1, minsegments=3, maxlowen=10, maxretries=5,
+                 uninformativeWinit=False, uninformativeHinit=True,
                  normalize_frames=True, viterbi_segmenter=False, **kwargs):
     """Segment the given feature sequence using SI-PLCA
 
@@ -124,6 +125,8 @@ def segment_song(seq, rank=4, win=32, nrep=1, minsegments=3, maxretries=5,
         Number of patterns (unique segments) to search for.        
     win : int
         Length of patterns in frames.
+    seed : int
+        Random number generator seed.  Defaults to None.
     nrep : int
         Number of times to repeat the analysis.  The repetition with
         the lowest reconstrucion error is returned.  Defaults to 1.
@@ -180,6 +183,9 @@ def segment_song(seq, rank=4, win=32, nrep=1, minsegments=3, maxretries=5,
     seq = seq.copy()
     if normalize_frames:
         seq /= seq.max(0) + np.finfo(float).eps
+
+    logger.info('Using random seed %s.', seed)
+    np.random.seed(seed)
     
     if 'alphaWcutoff' in kwargs and 'alphaWslope' in kwargs:
         kwargs['alphaW'] = create_sparse_W_prior((seq.shape[0], win),
@@ -398,7 +404,7 @@ def convert_labels_to_segments(labels, frametimes):
     labels = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
     segments = ['%.4f\t%.4f\t%s' % (start, end, labels[label])
                 for start,end,label in zip(segstarttimes,segendtimes,seglabels)]
-    return '\n'.join(segments)
+    return '\n'.join(segments + [''])
     
 def segment_wavfile(wavfile, **kwargs):
     """Convenience function to compute segmentation of the given wavfile
