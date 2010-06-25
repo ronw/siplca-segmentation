@@ -299,9 +299,9 @@ def nmf_analysis_to_segmentation_using_viterbi_path(seq, win, W, Z, H,
     traceback = np.zeros(loglikelihood.shape, dtype=np.int) 
     lattice[0] = loglikelihood[0]
     for n in xrange(1, T):
-        pr = logtransmat.T + lattice[:n-1]
-        lattice[:,n] = np.max(pr, axis=0) + loglikelihood[:,n]
-        traceback[:,n] = np.argmax(pr, axis=0)
+        pr = logtransmat.T + lattice[:,n-1]
+        lattice[:,n] = np.max(pr, axis=1) + loglikelihood[:,n]
+        traceback[:,n] = np.argmax(pr, axis=1)
 
     # Do traceback to find most likely path.
     reverse_state_sequence = []
@@ -309,12 +309,11 @@ def nmf_analysis_to_segmentation_using_viterbi_path(seq, win, W, Z, H,
     for frame in reversed(traceback.T):
         reverse_state_sequence.append(s)
         s = frame[s]
-    labels = list(reversed(reverse_state_sequence))
+    labels = np.array(list(reversed(reverse_state_sequence)))
 
     remove_short_segments(labels, min_segment_length)
 
     return labels, likelihood
-
 
 def remove_short_segments(labels, min_segment_length):
     """Remove segments shorter than min_segment_length."""
