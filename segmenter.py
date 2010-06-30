@@ -345,7 +345,7 @@ def remove_short_segments(labels, min_segment_length):
 
         labels[start:end] = label
 
-def evaluate_segmentation(labels, gtlabels, Z):
+def evaluate_segmentation(labels, gtlabels, Z=[0]):
     """Calls Matlab to evaluate the given segmentation labels
 
     labels and gtlabels are arrays containing a numerical label for
@@ -389,7 +389,7 @@ def convert_labels_to_segments(labels, frametimes):
     """Covert frame-wise segmentation labels to a list of segments in HTK
     format"""
     
-    # nonzero points in diff(labels) correspond to the final frame of
+    # Nonzero points in diff(labels) correspond to the final frame of
     # a segment (so just index into labels to find the segment label)
     boundaryidx = np.concatenate(([0], np.nonzero(np.diff(labels))[0],
                                   [len(labels) - 1]))
