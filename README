@@ -38,6 +38,7 @@ docstring for segmenter.segment_song.
 For MIREX 2010, please run the shell script runme_mirex2010.sh as follows:
 runme_mirex2010.sh inputfile.wav outputfile
 
+The script will attempt to install mlabwrap if it cannot find it.
 
 From Python
 `````````

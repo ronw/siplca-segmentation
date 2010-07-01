@@ -92,12 +92,19 @@ logging.basicConfig(level=logging.INFO,
                     '%(filename)s:%(lineno)d  %(message)s')
 logger = logging.getLogger('segmenter')
 
+MLABWRAPDIR = 'mlabwrap-1.1'
 try:
     from mlabwrap import mlab
-    mlab.addpath('coversongs')
-except:
-    logger.warning('Unable to import mlab module.  Feature extraction '
-                   'and evaluation will not work.')
+except ImportError:
+    logger.warning('Unable to import mlab module.  Attempting to install...')
+    os.system('cd %s; python setup.py build' % MLABWRAPDIR)
+    basedir = '%s/build/' % MLABWRAPDIR
+    sys.path.extend([os.path.join(basedir, x) for x in os.listdir(basedir)
+                     if x.startswith('lib')])
+    from mlabwrap import mlab
+
+mlab.addpath('coversongs')
+
 
 
 def extract_features(wavfilename, fctr=400, fsd=1.0, type=1):
