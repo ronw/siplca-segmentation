@@ -108,7 +108,8 @@ def extract_features(wavfilename, fctr=400, fsd=1.0, type=1):
     logger.info('Extracting beat-synchronous chroma features from %s',
                 wavfilename)
     x,fs = mlab.wavread(wavfilename, nout=2)
-    feats,beats = mlab.chrombeatftrs(x.sum(1), fs, fctr, fsd, type, nout=2)
+    feats,beats = mlab.chrombeatftrs(x.mean(1)[:,np.newaxis], fs, fctr, fsd,
+                                     type, nout=2)
     return feats, beats.flatten()
 
 def segment_song(seq, rank=4, win=32, seed=None,
