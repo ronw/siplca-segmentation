@@ -115,8 +115,10 @@ def extract_features(wavfilename, fctr=400, fsd=1.0, type=1):
     logger.info('Extracting beat-synchronous chroma features from %s',
                 wavfilename)
     x,fs = mlab.wavread(wavfilename, nout=2)
-    feats,beats = mlab.chrombeatftrs(x.sum(1), fs, fctr, fsd, type, nout=2)
-    return feats, beats.flatten()
+    feats,beats = mlab.chrombeatftrs(x.mean(1)[:,np.newaxis], fs, fctr, fsd,
+                                     type, nout=2)
+    songlen = x.shape[0] / fs
+    return feats, beats.flatten(), songlen
 
 def segment_song(seq, rank=4, win=32, seed=None,
                  nrep=1, minsegments=3, maxlowen=10, maxretries=5,
@@ -392,7 +394,7 @@ def compute_effective_pattern_length(w):
     winlen = nonzero_idx[-1] - nonzero_idx[0] + 1
     return winlen
 
-def convert_labels_to_segments(labels, frametimes):
+def convert_labels_to_segments(labels, frametimes, songlen=None):
     """Covert frame-wise segmentation labels to a list of segments in HTK
     format"""
     
@@ -401,8 +403,6 @@ def convert_labels_to_segments(labels, frametimes):
     boundaryidx = np.concatenate(([0], np.nonzero(np.diff(labels))[0],
                                   [len(labels) - 1]))
     boundarytimes = frametimes[boundaryidx]
-    # Fix timing of first beat.
-    boundarytimes[0] = 0;
 
     segstarttimes = boundarytimes[:-1]
     segendtimes = boundarytimes[1:]
@@ -411,6 +411,13 @@ def convert_labels_to_segments(labels, frametimes):
     labels = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
     segments = ['%.4f\t%.4f\t%s' % (start, end, labels[label])
                 for start,end,label in zip(segstarttimes,segendtimes,seglabels)]
+
+    # Add silence before first beat and after last beat.
+    silencelabel = labels[seglabels.max() + 1]
+    segments = ['0.0\t%.4f\t%s' % (segstarttimes[0], silencelabel)] + segments
+    if songlen:
+        segments += ['%.4f\t%.4f\t%s' % (segendtimes[-1], songlen, silencelabel)]
+
     return '\n'.join(segments + [''])
     
 def segment_wavfile(wavfile, **kwargs):
@@ -420,9 +427,9 @@ def segment_wavfile(wavfile, **kwargs):
 
     Returns a string containing list of segments in HTK label format.
     """
-    features, beattimes = extract_features(wavfile)
+    features, beattimes, songlen = extract_features(wavfile)
     labels, W, Z, H, segfun, norm = segment_song(features, **kwargs)
-    segments = convert_labels_to_segments(labels, beattimes)
+    segments = convert_labels_to_segments(labels, beattimes, songlen)
     return segments
 
 
