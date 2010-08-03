@@ -339,9 +339,9 @@ class PLCA(object):
     def compute_logprob(self, W, Z, H, recon):
         logprob = np.sum(self.V * np.log(recon + EPS*recon))
         # Add Dirichlet and Entropic priors.
-        logprob += ((self.alphaW - 1) * np.sum(np.log(W + EPS*W))
-                    + (self.alphaZ - 1) * np.sum(np.log(Z + EPS*Z))
-                    + (self.alphaH - 1) * np.sum(np.log(H + EPS*H)))
+        logprob += (np.sum((self.alphaW - 1) * np.log(W + EPS*W))
+                    + np.sum((self.alphaZ - 1) * np.log(Z + EPS*Z))
+                    + np.sum((self.alphaH - 1) * np.log(H + EPS*H)))
         # Add Entropic priors.
         logprob += (self.betaW * np.sum(W * np.log(W + EPS*W))
                     + self.betaZ * np.sum(Z * np.log(Z + EPS*Z))
