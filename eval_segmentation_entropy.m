@@ -7,30 +7,26 @@ function [So, Su] = eval_segmentation_entropy(estframelabs, gtframelabs)
 %
 % 2009-12-22 Ron Weiss <ronw@nyu.edu>
 
-if min(gtframelabs) == 0
-  gtframelabs = gtframelabs + 1;
-end
-if min(estframelabs) == 0
-  estframelabs = estframelabs + 1;
-end
+gtlabels = unique(gtframelabs);
+estlabels = unique(estframelabs);
 
 N = length(estframelabs);
-Na = length(unique(gtframelabs));
-Ne = length(unique(estframelabs));
+Na = length(gtlabels);
+Ne = length(estlabels);
 
 nij = zeros(Na, Ne);
 nia = zeros(1, Na);
 nje = zeros(1, Ne);
 for i = 1:Na
-  curra = 1.0 * (gtframelabs == i) + eps; 
+  curra = 1.0 * (gtframelabs == gtlabels(i)) + eps; 
   nia(i) = sum(curra);
   for j = 1:Ne
-    curre = 1.0 * (estframelabs == j);
+    curre = 1.0 * (estframelabs == estlabels(j));
     nij(i,j) = curra * curre' + eps;
   end
 end
 for j = 1:Ne
-  curre = 1.0 * (estframelabs == j) + eps;
+  curre = 1.0 * (estframelabs == estlabels(j)) + eps;
   nje(j) = sum(curre);
 end
 
