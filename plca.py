@@ -716,6 +716,8 @@ class FactoredSIPLCA2(SIPLCA2):
     This class performs the same decomposition as SIPLCA2, except W is
     factored into two independent terms:
       W = P(f, \tau | k) = P(f | \tau, k) P(\tau | k)
+    and H is also factored into two independent terms:
+      H = P(t, r | k) = P(t | k) P(r | t, k)
 
     This enables priors to be enforced *independently* over the rows
     and columns of W_k.  The `alphaW` and `betaW` arguments now
@@ -726,10 +728,12 @@ class FactoredSIPLCA2(SIPLCA2):
     --------
     SIPLCA2 : 2D Shift-Invariant PLCA
     """
-    def __init__(self, V, rank, alphaT=0, betaT=0, **kwargs):
+    def __init__(self, V, rank, alphaT=0, betaT=0, alphaR=0, betaR=0, **kwargs):
         SIPLCA2.__init__(self, V, rank, **kwargs)
         self.alphaT = 1 + alphaT
         self.betaT = betaT
+        self.alphaR = 1 + alphaR
+        self.betaR = betaR
 
     def do_mstep(self, curriter):
         Zevidence = self._fix_negative_values(self.VRW.sum(2).sum(0)
@@ -745,22 +749,39 @@ class FactoredSIPLCA2(SIPLCA2):
         Pf = self._apply_entropic_prior_and_normalize(
             initialPf, Pf_evidence, self.betaW, nu=self.nu, axis=0)
 
-        # P(\tau, k)
-        Ptauk_evidence = self._fix_negative_values(self.VRW.sum(0)
-                                                   + self.alphaT - 1)
-        initialPtauk = normalize(Ptauk_evidence)
-        Ptauk = self._apply_entropic_prior_and_normalize(
-            initialPtauk, Ptauk_evidence, self.betaT, nu=self.nu)
-        Ptaugivenk = Ptauk / Z[:,np.newaxis]
+        # P(\tau | k)
+        Ptau_evidence = self._fix_negative_values(self.VRW.sum(0)
+                                                  + self.alphaT - 1)
+        initialPtau = normalize(Ptau_evidence, 1)
+        Ptau = self._apply_entropic_prior_and_normalize(
+            initialPtau, Ptau_evidence, self.betaT, nu=self.nu, axis=1)
 
         # W = P(f, \tau | k)
-        W = Pf * Ptaugivenk[np.newaxis,:,:]
+        W = Pf * Ptau[np.newaxis,:,:]
 
-        Hevidence = self._fix_negative_values(self.VRH.transpose((1,2,0))
-                                              + self.alphaH - 1)
-        initialH = normalize(Hevidence, axis=[1, 2])
-        H = self._apply_entropic_prior_and_normalize(
-            initialH, Hevidence, self.betaH, nu=self.nu, axis=[1, 2])
+        # Factored H = P(t, r | k) = P(t | k) P(r | t, k)
+        # P(t | k)
+        Pt_evidence = self._fix_negative_values(self.VRH.sum(2).T
+                                                + self.alphaH - 1)
+        initialPt = normalize(Pt_evidence, 1)
+        Pt = self._apply_entropic_prior_and_normalize(
+            initialPt, Pt_evidence, self.betaH, nu=self.nu, axis=1)
+
+        # P(r | t, k)
+        Pr_evidence = self._fix_negative_values(self.VRH.transpose((1,2,0))
+                                                + self.alphaR - 1)
+        initialPr = normalize(Pr_evidence, 1)
+        Pr = self._apply_entropic_prior_and_normalize(
+            initialPr, Pr_evidence, self.betaR, nu=self.nu, axis=1)
+
+        # H = P(r, t | k)
+        H = Pt[:,np.newaxis,:] * Pr
+
+        #Hevidence = self._fix_negative_values(self.VRH.transpose((1,2,0))
+        #                             + self.alphaH - 1)
+        #initialH = normalize(Hevidence, axis=[1, 2])
+        #H = self._apply_entropic_prior_and_normalize(
+        #    initialH, Hevidence, self.betaH, nu=self.nu, axis=[1, 2])
 
         return self._prune_undeeded_bases(W, Z, H, curriter)
 
