@@ -116,7 +116,8 @@ def extract_features(wavfilename, fctr=400, fsd=1.0, type=1):
 def segment_song(seq, rank=4, win=32, seed=None,
                  nrep=1, minsegments=3, maxlowen=10, maxretries=5,
                  uninformativeWinit=False, uninformativeHinit=True,
-                 normalize_frames=True, viterbi_segmenter=False, **kwargs):
+                 normalize_frames=True, viterbi_segmenter=False,
+                 align_downbeats=False, **kwargs):
     """Segment the given feature sequence using SI-PLCA
 
     Parameters
@@ -156,6 +157,11 @@ def segment_song(seq, rank=4, win=32, seed=None,
         If True uses uses the Viterbi algorithm to convert SIPLCA
         decomposition into segmentation, otherwises uses the process
         described in [1].  Defaults to False.
+    align_downbeats : boolean
+        If True, postprocess the SIPLCA analysis to find the optimal
+        alignments of the components of W with V.  I.e. try to align
+        the first column of W to the downbeats in the song.  Defaults
+        to False.
     kwargs : dict
         Keyword arguments passed to plca.SIPLCA.analyze.  See
         plca.SIPLCA for more details.
@@ -198,7 +204,7 @@ def segment_song(seq, rank=4, win=32, seed=None,
 
     F, T = seq.shape
     if uninformativeWinit:
-        kwargs['initW'] = np.ones((F, rank, win)) / F*win
+        kwargs['initW'] = np.ones((F, rank, win)) / (F*win)
     if uninformativeHinit:
         kwargs['initH'] = np.ones((rank, T)) / T
         
@@ -228,11 +234,23 @@ def segment_song(seq, rank=4, win=32, seed=None,
         W, Z, H, norm, recon, div = outputs[np.argmin(div)]
         nlowen_recon = np.sum(recon.sum(0) <= lowen)
 
+    if align_downbeats:
+        alignedW = plca.normalize(find_downbeat(seq, W)
+                                  + 0.1 * np.finfo(float).eps, 1)
+        rank = len(Z)
+        if uninformativeHinit:
+            kwargs['initH'] = np.ones((rank, T)) / T
+        if 'alphaZ' in kwargs:
+            kwargs['alphaZ'] = 0
+        W, Z, H, norm, recon, div = plca.SIPLCA.analyze(
+            seq, rank=rank, win=win, initW=alignedW, **kwargs)
+
     if viterbi_segmenter:
         segmentation_function = nmf_analysis_to_segmentation_using_viterbi_path
     else:
         segmentation_function = nmf_analysis_to_segmentation
     labels, segfun = segmentation_function(seq, win, W, Z, H, **kwargs)
+
     return labels, W, Z, H, segfun, norm
 
 def create_sparse_W_prior(shape, cutoff, slope):
@@ -297,7 +315,7 @@ def nmf_analysis_to_segmentation_using_viterbi_path(seq, win, W, Z, H,
 
     transmat = np.zeros((rank, rank))
     for z in xrange(rank):
-        transmat[z,:] = (1 - selfloopprob) / (rank - 1.0)
+        transmat[z,:] = (1 - selfloopprob) / (rank - 1 + np.finfo(float).eps)
         transmat[z,z] = selfloopprob
 
     # Find Viterbi path.
@@ -412,6 +430,55 @@ def convert_labels_to_segments(labels, frametimes, songlen=None):
         segments += ['%.4f\t%.4f\t%s' % (segendtimes[-1], songlen, silencelabel)]
 
     return '\n'.join(segments + [''])
+
+def _compute_summary_correlation(A, B):
+    return sum(np.correlate(A[x], B[x], 'full') for x in xrange(A.shape[0]))
+
+def find_downbeat(V, W):
+    newW = W.copy()
+    for k in xrange(W.shape[1]):
+        Wlen = compute_effective_pattern_length(W[:,k,:])
+        Wk = W[:,k,:Wlen]
+        corr = np.array([_compute_summary_correlation(plca.shift(Wk, r, 1), V)
+                         for r in xrange(Wlen)])
+        bestshift = corr[:,Wlen:-Wlen].sum(1).argmin()
+        print k, Wlen, bestshift
+        newW[:,k,:Wlen] = plca.shift(Wk, bestshift, 1)
+    return newW
+
+def find_downbeat_slow(V, W, Z, H, **kwargs):
+    bopt = np.zeros(len(Z), dtype=int)
+    nW = np.zeros(W.shape)
+    nH = np.zeros(H.shape)
+    for k in np.argsort(Z)[::-1]:
+        Wlen = compute_effective_pattern_length(W[:,k,:])
+        params = []
+        logprobs = []
+        for b in xrange(Wlen):
+            initW = W
+            initW[:,k,:Wlen] = plca.shift(W[:,k,:Wlen], b, axis=1)
+            W,Z,H,norm,recon,logprob = plca.FactoredSIPLCA2.analyze(
+                V, rank=len(Z), win=[H.shape[1], W.shape[-1]],
+                niter=50, circular=[True,False],
+                initW=initW, initH=np.ones(H.shape), initZ=Z,
+                **kwargs)
+            params.append((W,Z,H))
+            logprobs.append(logprob)
+            print b, logprobs[-1]
+        bopt[k] = np.argmax(logprobs)
+        W[:,k] = params[bopt[k]][0][:,k]
+        nH[k] = params[bopt[k]][2][k]
+    return bopt, W, Z, nH
+
+def shift_key_to_zero(W, Z, H):
+    newW = np.zeros(W.shape)
+    newH = np.zeros(H.shape)
+    for k in xrange(len(Z)):
+        key_profile = H[k].sum(1)
+        main_key = np.argmax(key_profile)
+        newW[:,k] = plca.shift(W[:,k], main_key, axis=0, circular=True)
+        newH[k] = plca.shift(H[k], -main_key, axis=0, circular=True)
+    return newW, Z, newH
     
 def segment_wavfile(wavfile, **kwargs):
     """Convenience function to compute segmentation of the given wavfile
