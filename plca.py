@@ -887,21 +887,32 @@ class DiscreteWSIPLCA2(FactoredSIPLCA2):
         Pf = self._apply_entropic_prior_and_normalize(
             initialPf, Pf_evidence, self.betaW, nu=self.nu, axis=0)
 
-        # P(\tau, k)
-        Ptauk_evidence = self._fix_negative_values(self.VRW.sum(0)
-                                                   + self.alphaT - 1)
-        initialPtauk = normalize(Ptauk_evidence)
-        Ptauk = self._apply_entropic_prior_and_normalize(
-            initialPtauk, Ptauk_evidence, self.betaT, nu=self.nu)
-        Ptaugivenk = Ptauk / Z[:,np.newaxis]
+        # P(\tau | k)
+        Ptau_evidence = self._fix_negative_values(self.VRW.sum(0)
+                                                  + self.alphaT - 1)
+        initialPtau = normalize(Ptau_evidence, 1)
+        Ptau = self._apply_entropic_prior_and_normalize(
+            initialPtau, Ptau_evidence, self.betaT, nu=self.nu, axis=1)
 
         # W = P(f, \tau | k)
-        W = Pf * Ptaugivenk[np.newaxis,:,:]
+        W = Pf * Ptau[np.newaxis,:,:]
 
-        Hevidence = self._fix_negative_values(
-            self.VRH.transpose((1,2,3,0)) + self.alphaH - 1)
-        initialH = normalize(Hevidence, axis=[1, 2, 3])
-        H = self._apply_entropic_prior_and_normalize(
-            initialH, Hevidence, self.betaH, nu=self.nu, axis=[1, 2, 3])
+        # Factored H = P(t, r, w | k) = P(t | k) P(r, n | t, k)
+        # P(t | k)
+        Pt_evidence = self._fix_negative_values(self.VRH.sum(3).sum(2).T
+                                                + self.alphaH - 1)
+        initialPt = normalize(Pt_evidence, 1)
+        Pt = self._apply_entropic_prior_and_normalize(
+            initialPt, Pt_evidence, self.betaH, nu=self.nu, axis=1)
+
+        # P(r, n | t, k)
+        Prn_evidence = self._fix_negative_values(self.VRH.transpose((1,2,3,0))
+                                                + self.alphaR - 1)
+        initialPrn = normalize(Prn_evidence, [1, 2])
+        Prn = self._apply_entropic_prior_and_normalize(
+            initialPrn, Prn_evidence, self.betaR, nu=self.nu, axis=[1, 2])
+
+        # H = P(r, n, t | k)
+        H = Pt[:,np.newaxis,np.newaxis,:] * Prn
 
         return self._prune_undeeded_bases(W, Z, H, curriter)
