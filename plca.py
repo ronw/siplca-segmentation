@@ -794,10 +794,12 @@ class DiscreteWSIPLCA2(FactoredSIPLCA2):
     PLCA : Probabilistic Latent Component Analysis
     SIPLCA2 : 2D SIPLCA
     """ 
-    def __init__(self, V, rank, warpfactors=[1], **kwargs):
+    def __init__(self, V, rank, warpfactors=[1], alphaWarp=0, betaWarp=0,
+                 **kwargs):
         FactoredSIPLCA2.__init__(self, V, rank, **kwargs)
-
         self.warpfactors = np.array(warpfactors, dtype=np.float)
+        self.alphaWarp = 1 + alphaWarp
+        self.betaWarp = betaWarp
         self.nwarp = len(self.warpfactors)
         self.VRH = np.empty((self.T, self.rank, self.winF, self.nwarp))
 
@@ -814,10 +816,6 @@ class DiscreteWSIPLCA2(FactoredSIPLCA2):
 
             self.taus.append([int(x) for x in currtaus])
             self.tauproportions.append(currtauproportions)
-
-        #print self.taus
-        #print self.tauproportions
-        #print [x.sum() for x in self.tauproportions]
 
     def reconstruct(self, W, Z, H, norm=1.0, circular=False):
         if W.ndim == 2:
@@ -897,7 +895,7 @@ class DiscreteWSIPLCA2(FactoredSIPLCA2):
         # W = P(f, \tau | k)
         W = Pf * Ptau[np.newaxis,:,:]
 
-        # Factored H = P(t, r, w | k) = P(t | k) P(r, n | t, k)
+        # Factored H = P(t, r, w | k) = P(t | k) P(r | t, k) P(w | r, t, k)
         # P(t | k)
         Pt_evidence = self._fix_negative_values(self.VRH.sum(3).sum(2).T
                                                 + self.alphaH - 1)
@@ -905,14 +903,21 @@ class DiscreteWSIPLCA2(FactoredSIPLCA2):
         Pt = self._apply_entropic_prior_and_normalize(
             initialPt, Pt_evidence, self.betaH, nu=self.nu, axis=1)
 
-        # P(r, n | t, k)
-        Prn_evidence = self._fix_negative_values(self.VRH.transpose((1,2,3,0))
-                                                + self.alphaR - 1)
-        initialPrn = normalize(Prn_evidence, [1, 2])
-        Prn = self._apply_entropic_prior_and_normalize(
-            initialPrn, Prn_evidence, self.betaR, nu=self.nu, axis=[1, 2])
+        # P(r | t, k)
+        Pr_evidence = self._fix_negative_values(
+            self.VRH.sum(3).transpose((1,2,0)) + self.alphaR - 1)
+        initialPr = normalize(Pr_evidence, 1)
+        Pr = self._apply_entropic_prior_and_normalize(
+            initialPr, Pr_evidence, self.betaR, nu=self.nu, axis=1)
 
-        # H = P(r, n, t | k)
-        H = Pt[:,np.newaxis,np.newaxis,:] * Prn
+        # P(w | r, t, k)
+        Pw_evidence = self._fix_negative_values(
+            self.VRH.transpose((1,2,3,0)) + self.alphaWarp - 1)
+        initialPw = normalize(Pw_evidence, 2)
+        Pw = self._apply_entropic_prior_and_normalize(
+            initialPw, Pw_evidence, self.betaWarp, nu=self.nu, axis=2)
+
+        # H = P(r, w, t | k)
+        H = Pt[:,np.newaxis,np.newaxis,:] * Pr[:,:,np.newaxis,:] * Pw
 
         return self._prune_undeeded_bases(W, Z, H, curriter)
